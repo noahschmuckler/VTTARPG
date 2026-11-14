@@ -5,7 +5,8 @@ import { tile, key } from './grid.js';
 import { HERO_COLOR } from './content.js';
 
 export const HW = 64, HH = 37, EH = 30, DEPTH = 3;
-const WALLS = ['stoneWall', 'stoneWall', 'stoneWallAged', 'stoneWallWindow', 'stoneWall', 'stoneWallColumn', 'stoneWallAged', 'stoneWallBroken', 'stoneWallWindowBars', 'stoneWall', 'stoneWallHole'];
+// Only full-width wall pieces, so the back walls read as one continuous run (no lone pillars or collapsed gaps).
+const WALLS = ['stoneWall', 'stoneWall', 'stoneWallAged', 'stoneWallWindow', 'stoneWall', 'stoneWallAged', 'stoneWallWindowBars', 'stoneWall', 'stoneWallDoorClosed'];
 const BOLT = { arcanist: '#ff9a3d', runepriest: '#5fd3c4', ranger: '#e9e2d0', arrow: '#e9e2d0', lightning: '#9fd0ff', hammer: '#5fd3c4' };
 const ease = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 
@@ -290,6 +291,7 @@ export class View {
     const gate = G.map.spawns.find(s => s.x === x && s.y === y && ((side === 'north' && s.y === 0) || (side === 'west' && s.x === 0)));
     const i = side === 'north' ? x : y + 5;
     const base = gate ? 'stoneWallGateOpen' : WALLS[(i * 7 + m.w) % WALLS.length];
+    if (x === 0 && y === 0) { if (side === 'north') this.img('stoneWallCorner_S', c.x, c.y); return; } // the back corner: one piece covers both walls
     this.img(`${base}_${side === 'north' ? 'S' : 'E'}`, c.x, c.y);
   }
   face(pts, fill) { const g = this.g; g.beginPath(); g.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i], pts[i + 1]); g.closePath(); if (fill) { g.fillStyle = fill; g.fill(); } }
