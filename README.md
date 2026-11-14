@@ -36,6 +36,12 @@ Grid adaptations (all in `src/game/rules.js`, `SOLO` and `SPECS`): minion counts
 hero), a lone hero's foes hit a little softer, Rune of Recall can also swap with a foe, and the party catches its breath
 (35% health) after each scene.
 
+## Playtest forum
+
+In the game, 💬 (also in the menu and on the title screen) opens a forum: report a bug (with a screenshot and the game's
+state attached), suggest ideas, give feedback, ask questions, reply and +1. A red dot on 💬 means the developer
+answered something you posted. The developer side is `tools/forum.js` (see CLAUDE.md).
+
 ## Controls
 
 On a phone, tap once to select (path, free blows and foe details show) and tap again or press the button to confirm; pinch to zoom. With a mouse, click a blue square to move, a red-ringed foe to attack, a chest to open it, the glowing stair to descend.

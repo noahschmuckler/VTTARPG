@@ -6,8 +6,8 @@
   --serif: "Cinzel", Georgia, "Times New Roman", serif; --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 14px/1.4 var(--sans); }
-#view { position: fixed; inset: 0; display: block; touch-action: none; cursor: default; }
+html, body { margin: 0; height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 14px/1.4 var(--sans); }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: default; }
 button { font: inherit; color: var(--ink); background: linear-gradient(#3a2d20, #241b12); border: 1px solid var(--edge); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--brass); background: linear-gradient(#4a3a28, #2c2116); }
 button:disabled { opacity: 0.4; cursor: default; }
@@ -329,4 +329,47 @@ kbd { font: 11px var(--sans); padding: 0 4px; border: 1px solid var(--edge); bor
   .aph > .dim { font-size: 11.5px; }
   .opt { padding: 5px 7px; } .opt button { min-height: 38px; }
   #modal .panel.wide.picking { padding-bottom: 48vh; }
+}
+
+/* the playtest forum */
+#btnForum { position: relative; }
+#btnForum .dot { position: absolute; top: 3px; right: 3px; width: 9px; height: 9px; border-radius: 50%; background: #ff6a4a; box-shadow: 0 0 6px #ff6a4a; }
+.forum { min-width: min(720px, 90vw); }
+.forum .fhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-right: 36px; }
+.forum .fbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin: 8px 0; }
+.forum .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.forum .chips button { padding: 4px 9px; font-size: 12.5px; }
+.forum .chips button.on { border-color: var(--brass2); color: var(--brass2); background: linear-gradient(#4a3a28, #2c2116); }
+.forum .flist { display: grid; gap: 5px; }
+.forum .frow { display: grid; grid-template-columns: 30px 1fr auto; gap: 8px; align-items: center; text-align: left; padding: 8px 10px; background: #15110c; }
+.forum .frow.pinned { border-color: var(--brass); }
+.forum .fk { font-size: 20px; text-align: center; } .forum .fk.big { font-size: 30px; }
+.forum .ft { display: flex; flex-direction: column; min-width: 0; } .forum .ft b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.forum .ft .dim, .forum .fm .dim { font-size: 11.5px; }
+.forum .fm { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
+.forum .st { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid #6b5330; color: var(--dim); }
+.forum .st-open { color: #9fc4ff; border-color: #3b5b8a; } .forum .st-planned { color: var(--brass2); border-color: var(--brass); }
+.forum .st-fixed, .forum .st-answered { color: var(--good); border-color: #3a7a3a; } .forum .st-wontfix { color: #b0a090; }
+.forum .devdot { color: #1a1408; background: var(--brass2); border-radius: 8px; padding: 0 6px; font-size: 10.5px; font-weight: 700; }
+.forum .fback { margin-bottom: 8px; }
+.forum .fthread { display: flex; gap: 10px; align-items: flex-start; padding-right: 36px; }
+.forum .fthread h2 { margin: 0; }
+.forum .fpost { border-left: 3px solid #4a3a26; background: #15110c; border-radius: 6px; padding: 8px 10px; margin: 8px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.forum .fpost.first { border-left-color: #6aa0ff; }
+.forum .fpost.dev { border-left-color: var(--brass2); background: #241c10; }
+.forum .fwho { margin-bottom: 2px; }
+.forum .fshot { display: block; max-width: 100%; max-height: 320px; margin: 8px 0; border-radius: 6px; border: 1px solid var(--edge); }
+.forum .fctx { font-size: 11px; margin: 6px 0; overflow-wrap: anywhere; }
+.forum .vote.on { border-color: var(--good); color: var(--good); }
+.forum label { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; font-size: 13px; color: var(--dim); }
+.forum label.chk { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
+.forum input:not([type=checkbox]), .forum textarea { font: 15px var(--sans); background: #120e0a; color: var(--ink); border: 1px solid var(--edge); border-radius: 6px; padding: 8px 10px; }
+.forum .freply textarea { width: 100%; }
+.forum .freply .btnrow { margin-top: 6px; align-items: center; } .forum .freply #fName { flex: 1; min-width: 0; }
+.forum .kinds button { font-size: 14px; padding: 6px 12px; }
+@media (max-width: 700px) {
+  .forum { min-width: 0; }
+  .forum .frow { grid-template-columns: 24px 1fr; } .forum .fm { grid-column: 2; flex-direction: row; align-items: center; gap: 8px; }
+  .forum .fhead h2 { font-size: 20px; }
+  .forum button { min-height: 40px; }
 }

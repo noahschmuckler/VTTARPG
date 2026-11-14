@@ -26,15 +26,22 @@ export class View {
     this.time = 0;
     this.shake = 0;
     this.resize();
-    addEventListener('resize', () => this.resize());
+    // Phones report stale sizes mid-rotation: measure again once the rotation has settled.
+    const again = () => { this.resize(); requestAnimationFrame(() => this.resize()); setTimeout(() => this.resize(), 250); setTimeout(() => this.resize(), 700); };
+    addEventListener('resize', again);
+    addEventListener('orientationchange', again);
+    if (window.visualViewport) visualViewport.addEventListener('resize', again);
+    document.addEventListener('visibilitychange', again);
   }
+  // The canvas fills the screen through CSS; its backing store follows the size it is actually shown at.
   resize() {
     const r = Math.min(2, devicePixelRatio || 1);
-    this.dpr = r;
-    this.c.width = Math.round(innerWidth * r);
-    this.c.height = Math.round(innerHeight * r);
-    this.c.style.width = innerWidth + 'px';
-    this.c.style.height = innerHeight + 'px';
+    const box = this.c.getBoundingClientRect();
+    const w = Math.round(box.width || document.documentElement.clientWidth), h = Math.round(box.height || document.documentElement.clientHeight);
+    if (w === this.cssW && h === this.cssH && r === this.dpr) return;
+    this.dpr = r; this.cssW = w; this.cssH = h;
+    this.c.width = Math.round(w * r);
+    this.c.height = Math.round(h * r);
   }
   // ------------------------------------------------------------ setup
   attach(G) {
@@ -45,8 +52,8 @@ export class View {
     for (const f of G.foes) if (!f.dead) this.ensure(f.id);
     // fit most of the map on screen, then look at the hero
     const span = (G.map.w + G.map.h) * HW;
-    const phone = innerWidth < 700;
-    this.cam.zoom = phone ? 0.62 : Math.max(0.5, Math.min(0.9, innerWidth / (span * 0.7), innerHeight / (span * 0.48)));
+    const phone = this.cssW < 700;
+    this.cam.zoom = phone ? 0.62 : Math.max(0.5, Math.min(0.9, this.cssW / (span * 0.7), this.cssH / (span * 0.48)));
     const mid = phone ? { x: G.pos.x - 2, y: G.pos.y - 2 } : { x: (G.pos.x + G.map.w / 2) / 2, y: (G.pos.y + G.map.h / 2) / 2 };
     const t = this.iso(mid.x, mid.y, 0);
     this.cam.x = t.x; this.cam.y = t.y;
@@ -254,6 +261,7 @@ export class View {
 
   // ------------------------------------------------------------ drawing
   draw() {
+    this.resize(); // cheap no-op unless the shown size changed (rotation, browser bars, split view)
     const G = this.G, g = this.g, W = this.c.width, H = this.c.height;
     g.setTransform(1, 0, 0, 1, 0, 0);
     const bg = g.createRadialGradient(W / 2, H * 0.45, 50, W / 2, H / 2, Math.max(W, H) * 0.75);

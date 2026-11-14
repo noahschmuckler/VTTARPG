@@ -1,5 +1,5 @@
 name = "delvers-descent"
-main = "dist/worker.js"
+main = "dist/main.js"
 compatibility_date = "2025-06-01"
 workers_dev = true
 
@@ -9,3 +9,13 @@ workers_dev = true
 type = "Data"
 globs = ["**/*.bin"]
 fallthrough = false
+
+# The playtest forum: one Durable Object with SQLite storage (worker/forum.js). The admin key is the Worker secret
+# ADMIN_KEY, set with `node tools/forum.js key` (never committed).
+[[durable_objects.bindings]]
+name = "FORUM"
+class_name = "Forum"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Forum"]

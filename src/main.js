@@ -7,6 +7,8 @@ import { HERO_COLOR, rosterFor } from './game/content.js';
 import { cardSVG, cardBackSVG, consumableSVG } from './ledger/art.js';
 import { LINES, pick as pickLine, newDeck, scoreHand, handName, compareHands, houseSwaps } from './ledger/merchant.js';
 import { SLOT_LABEL, RARITIES, ENEMY_TYPES } from './ledger/engine.js';
+import { openForum, checkReplies } from './forum.js';
+import { BUILD } from './version.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -40,6 +42,45 @@ async function boot() {
   requestAnimationFrame(loop);
   bindInput();
   titleScreen();
+  // shared links straight into the forum: #forum or #thread-12
+  const fromHash = () => { const m = location.hash.match(/^#(forum|thread-(\d+))$/); if (m) forum(m[2] ? { kind: 'thread', id: Number(m[2]) } : { kind: 'list' }); };
+  fromHash();
+  addEventListener('hashchange', fromHash);
+  forumDot();
+  setInterval(forumDot, 120_000);
+}
+
+// ================================================================== the playtest forum
+async function forumDot() { $('#btnForum .dot').hidden = !(await checkReplies()); }
+function gameContext() {
+  const bits = [`build ${BUILD}`];
+  if (G) {
+    const sc = R.sceneDef(G);
+    bits.push(`${G.adv.acts[G.act]?.name || ''} / ${sc?.name || ''}`, G.map ? `round ${G.round}` : '', `stage ${G.stage}`);
+    bits.push('party ' + G.party.map(h => `${h.name} (${R.CLASSES[h.cls].name}, ${h.hp}/${R.derive(h).maxHp})`).join(', '));
+  }
+  bits.push(`${innerWidth}×${innerHeight}${TOUCH ? ' touch' : ''}`, navigator.userAgent.replace(/^Mozilla\/5.0 /, '').slice(0, 160));
+  return bits.filter(Boolean).join(' · ');
+}
+function gameScreenshot() {
+  try {
+    const src = $('#view');
+    if (!G?.map || !src.width) return null;
+    const w = Math.min(640, src.width), h = Math.round(src.height * w / src.width);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(src, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', 0.7);
+  } catch { return null; }
+}
+function forum(view) {
+  // where to return when the forum closes: the title screen, the Rakshasa's camp, or the fight
+  const back = !$('#hud').hidden ? 'game' : G?.stage === 'camp' ? 'camp' : 'title';
+  if (back === 'game') mode = { kind: 'idle' };
+  openForum({ modal, closeModal, esc, toast, context: gameContext, screenshot: gameScreenshot, onClose: () => {
+    forumDot();
+    if (location.hash) history.replaceState(null, '', location.pathname);
+    if (back === 'camp') camp(); else if (back === 'title') titleScreen(); else refresh();
+  } }, view);
 }
 
 // ================================================================== saving
@@ -112,7 +153,7 @@ function titleScreen() {
     <p class="pick-help">Tap callings to add them to your party (1 to ${R.SOLO.maxParty}); tap again to remove. You control every hero.</p>
     <div class="classes">${cards}</div>
     <div class="name-row"><span id="partyNames"></span><button class="primary" id="go">Begin the descent</button></div>
-    <div class="btnrow" style="justify-content:center">${saved ? `<button id="cont">Continue: ${esc(savedParty)} (${esc(saved.G.adv.acts[saved.G.act]?.name || '')})</button>` : ''}<button id="howto">How to play</button></div>
+    <div class="btnrow" style="justify-content:center">${saved ? `<button id="cont">Continue: ${esc(savedParty)} (${esc(saved.G.adv.acts[saved.G.act]?.name || '')})</button>` : ''}<button id="howto">How to play</button><button id="tForum">💬 Bugs, ideas & feedback</button></div>
     <div class="credits">Art: Kenney (CC0); heroes from the Flare game by Clint Bellanger and contributors (CC-BY-SA 3.0); monster renders by johndh, Wciow and ryan.dansie on OpenGameArt (CC0 / CC-BY-SA 3.0). Rules: Delvers' Ledger. See CREDITS.md.</div>
   </div>`);
   const show = () => {
@@ -140,6 +181,7 @@ function titleScreen() {
     beginScene();
   };
   p.querySelector('#howto').onclick = () => help(() => titleScreen());
+  p.querySelector('#tForum').onclick = () => forum({ kind: 'list' });
   if (saved) p.querySelector('#cont').onclick = () => {
     G = R.bindParty({ ...saved.G, fx: [] });
     rng = rngFrom(saved.rs);
@@ -620,6 +662,7 @@ function bindInput() {
   $('#btnCenter').onclick = () => view.centerOn(G.pos);
   $('#btnSpeed').onclick = () => { speed = speed === 1 ? 2 : speed === 2 ? 3 : 1; $('#btnSpeed').textContent = `${speed}×`; };
   $('#btnMenu').onclick = () => menu();
+  $('#btnForum').onclick = () => forum({ kind: 'list' });
   $('#modal').addEventListener('pointerdown', e => { if (e.target.id === 'modal' && $('#modal .close')) closeModal(); });
 }
 // Square-targeted powers (leap, blink, meteor…) pick the square under the finger, never a unit standing in front of it.
@@ -988,10 +1031,12 @@ function help(after) {
 }
 function menu() {
   const p = modal(`<button class="close">✕</button><h2>Menu</h2><div class="btnrow" style="justify-content:flex-start">
-    <button id="mHelp">How to play</button><button id="mRetry">Restart this scene</button><button id="mTitle" class="danger">Abandon run</button></div>
-    <p class="dim">Your run is saved in this browser after every action.</p>`, { narrow: true });
+    <button id="mHelp">How to play</button><button id="mBug">🐞 Report a bug</button><button id="mForum">💬 Playtest forum</button><button id="mRetry">Restart this scene</button><button id="mTitle" class="danger">Abandon run</button></div>
+    <p class="dim">Your run is saved in this browser after every action. Build ${esc(BUILD)}.</p>`, { narrow: true });
   p.querySelector('.close').onclick = closeModal;
   p.querySelector('#mHelp').onclick = () => help();
+  p.querySelector('#mBug').onclick = () => forum({ kind: 'new', preset: 'bug' });
+  p.querySelector('#mForum').onclick = () => forum({ kind: 'list' });
   p.querySelector('#mRetry').onclick = () => { $('#modal').hidden = true; R.retryScene(G, rng); G.fx = G.fx.filter(e => e.t !== 'spawn' && e.t !== 'log'); save(); enterScene(); };
   p.querySelector('#mTitle').onclick = () => { if (confirm('Abandon this run? Your party will be lost.')) { clearSave(); G = null; view.G = null; titleScreen(); } };
 }
