@@ -163,3 +163,22 @@ test('a party: each hero has their own turn; foes go for the nearest hero; ally 
   assert.equal(G.stage, 'scene', 'the others fight on');
   assert.notEqual(G.active, 0, 'control moves to a standing hero');
 });
+
+test('Gravity Well can be aimed into a chasm and drags foes over the edge', () => {
+  const rng = rngFrom(41), G = R.newRun('Orrin', 'arcanist', rng);
+  R.startScene(G, rng);
+  const { x, y } = G.pos;
+  // a clear strip to the west of the hero with a chasm square at x-5
+  for (let i = 1; i <= 7; i++) Object.assign(tile(G.map, x - i, y), { kind: i === 5 ? 'chasm' : 'floor', prop: null, e: 0, rough: false });
+  G.foes = [
+    { id: 'm', name: 'Grunt', type: 'minion', x: x - 3, y, hp: 1, maxHp: 1, armor: 0, damage: 60, attacks: 1, move: 4, reach: 1, abilities: [] },
+    { id: 'e', name: 'Brute', type: 'elite', x: x - 7, y, hp: 3000, maxHp: 3000, armor: 0, damage: 100, attacks: 1, move: 4, reach: 1, abilities: [] },
+  ];
+  G.waves = [];
+  G.hero.energy = 100;
+  const well = R.powerList(G).find(p => p.key === 'well');
+  assert.ok(R.powerTargets(G, well).some(c => c.x === x - 5 && c.y === y), 'a chasm square is a valid Gravity Well point');
+  assert.ok(R.usePower(G, 'well', { x: x - 5, y }, rng).ok);
+  assert.ok(G.foes[0].dead, 'the minion was dragged into the chasm');
+  assert.ok(G.foes[1].hp < 3000 && G.foes[1].pinned, 'the elite fell, clawed out hurt and is pinned');
+});

@@ -406,7 +406,7 @@ const SPECS = {
   vanish: { mode: 'walk', range: 4, text: 'Pick a square up to 4 moves away; you vanish there.' },
   pin: { mode: 'foes', range: 12, sight: true, max: 2, text: 'Pick up to 2 foes within 12 in sight, then confirm.' },
   blink: { mode: 'tile', range: 6, any: true, text: 'Pick any square within 6, at any height.' },
-  well: { mode: 'point', range: 8, sight: true, radius: 3, text: 'Pick a point within 8 in sight.' },
+  well: { mode: 'point', range: 8, sight: true, radius: 3, void: true, text: 'Pick a point within 8 in sight (a chasm works: foes are dragged over the edge).' },
   meteor: { mode: 'point', range: 10, radius: 2, text: 'Pick a point within 10.' },
   step: { mode: 'foe', range: 6, sight: false, strike: true, text: 'Pick a foe within 6: you appear behind it, then attack.' },
   smoke: { mode: 'self', text: 'Vanish into smoke.' },
@@ -423,7 +423,7 @@ const DESC = {
   vanish: 'Move up to 4 squares and become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
   pin: 'Pin up to 2 foes within 12 squares in sight so they can\'t move until the next round. +2 dice on your next attack.',
   blink: 'Teleport up to 6 squares, to any height and through anything, with no free blows. Gain a 200 ward.',
-  well: 'Pick a point within 8 squares in sight: every foe within 3 of it is dragged toward it and pinned until the next round. +2 dice on your next attack.',
+  well: 'Pick a point within 8 squares in sight: every foe within 3 of it is dragged toward it and pinned until the next round. Aim it into a chasm and they are dragged over the edge: minions are gone, elites claw back out hurt (bosses hold on). +2 dice on your next attack.',
   meteor: 'Pick a point within 10 squares: every foe within 2 of it takes 2 hits (minions are slain).',
   step: 'Teleport behind a foe within 6 squares, with no free blows. Then attack in the same action for triple damage.',
   smoke: 'Become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
@@ -459,7 +459,7 @@ export function powerTargets(G, p) {
       const d = dist(here, c);
       if (d > S.range || (d === 0 && S.mode === 'tile')) continue;
       if (S.mode === 'tile' && (!standable(t) || occupied(G, x, y, 'hero'))) continue;
-      if (S.mode === 'point' && t.kind !== 'floor') continue;
+      if (S.mode === 'point' && t.kind !== 'floor' && !(S.void && t.kind === 'chasm')) continue;
       if (S.up != null && t.e - he > S.up) continue;
       if (S.higher && t.e <= he) continue;
       if (S.sight && !lineOfSight(G.map, here, c)) continue;
@@ -557,6 +557,17 @@ export function usePower(G, keyName, target, rng) {
     case 'pin': for (const f of foes) { fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: 'ranger' }); pinFoe(G, f); } break;
     case 'well': {
       fx(G, { t: 'burst', at, kind: 'well', radius: S.radius });
+      if (tile(G.map, at.x, at.y).kind === 'chasm') { // into the void: drag each foe straight at the point, over the edge
+        for (const f of living(G).filter(f => dist(f, at) <= S.radius).sort((a, b) => dist(a, at) - dist(b, at))) {
+          for (let step = dist(f, at); step > 0 && !f.dead; step--) { // re-aim each step so diagonals still reach the edge
+            const was = { x: f.x, y: f.y };
+            push(G, f, dirFrom(f, at), 1, rng, { quiet: true });
+            if (f.x === was.x && f.y === was.y) break;
+          }
+          if (!f.dead) pinFoe(G, f);
+        }
+        break;
+      }
       for (const f of living(G).filter(f => dist(f, at) <= S.radius).sort((a, b) => dist(a, at) - dist(b, at))) {
         const spot = closestFree(G, at, f, 0);
         if (spot && dist(spot, at) < dist(f, at)) { const from = { x: f.x, y: f.y }; f.x = spot.x; f.y = spot.y; fx(G, { t: 'move', id: f.id, path: [from, spot], kind: 'pull' }); }
@@ -631,7 +642,7 @@ function closestFree(G, goal, unit, near) {
 }
 // Shove a foe up to n squares. Returns true if it was slammed into something (wall, foe, ledge).
 // Into a chasm: minions die, elites lose a share of health and claw back out, bosses stop at the edge.
-function push(G, f, [dx, dy], n, rng) {
+function push(G, f, [dx, dy], n, rng, { quiet = false } = {}) {
   const from = { x: f.x, y: f.y };
   let slam = false;
   for (let i = 0; i < n; i++) {
@@ -654,7 +665,7 @@ function push(G, f, [dx, dy], n, rng) {
     f.x = nx; f.y = ny;
   }
   if (f.x !== from.x || f.y !== from.y) fx(G, { t: 'move', id: f.id, path: [from, { x: f.x, y: f.y }], kind: 'push' });
-  if (slam) fx(G, { t: 'text', id: f.id, text: 'Slammed!', color: '#ff9a5a' });
+  if (slam && !quiet) fx(G, { t: 'text', id: f.id, text: 'Slammed!', color: '#ff9a5a' });
   return slam;
 }
 
