@@ -15,7 +15,7 @@ from PIL import Image
 
 KDIR, FDIR, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 SCALE = 0.5                      # Kenney tiles are 256 wide; the game uses 128
-ANCHOR = (128, 437.5)            # centre of a Kenney floor tile's top face in its 256x512 canvas
+ANCHOR = (128, 428)              # centre of a Kenney floor tile's top face (a 256x128, 2:1 diamond) in its 256x512 canvas
 os.makedirs(os.path.join(OUT, 'tiles'), exist_ok=True)
 os.makedirs(os.path.join(OUT, 'units'), exist_ok=True)
 manifest = {'tiles': {}, 'units': {}}

@@ -4,7 +4,7 @@ import { A, heroSheet } from './assets.js';
 import { tile, key } from './grid.js';
 import { HERO_COLOR } from './content.js';
 
-export const HW = 64, HH = 37, EH = 30, DEPTH = 3;
+export const HW = 64, HH = 32, EH = 30, DEPTH = 3; // Kenney floors are 2:1 diamonds: 128 × 64
 // Only full-width wall pieces, so the back walls read as one continuous run (no lone pillars or collapsed gaps).
 const WALLS = ['stoneWall', 'stoneWall', 'stoneWallAged', 'stoneWallWindow', 'stoneWall', 'stoneWallAged', 'stoneWallWindowBars', 'stoneWall', 'stoneWallDoorClosed'];
 const BOLT = { arcanist: '#ff9a3d', runepriest: '#5fd3c4', ranger: '#e9e2d0', arrow: '#e9e2d0', lightning: '#9fd0ff', hammer: '#5fd3c4' };
@@ -256,9 +256,7 @@ export class View {
     for (let s = 0; s <= m.w + m.h - 2; s++) {
       for (let x = Math.max(0, s - m.h + 1); x <= Math.min(s, m.w - 1); x++) {
         const y = s - x, t = tile(m, x, y);
-        if (y === 0) this.wallAt(x, y, t, 'north');
-        if (x === 0) this.wallAt(x, y, t, 'west');
-        this.drawTile(x, y, t);
+        this.drawTile(x, y, t); // floor, then this square's back walls, then its prop
         const list = at.get(key(x, y));
         if (list) for (const d of list.sort((p, q) => p.x + p.y - q.x - q.y)) this.drawUnit(d);
       }
@@ -297,6 +295,7 @@ export class View {
   face(pts, fill) { const g = this.g; g.beginPath(); g.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i], pts[i + 1]); g.closePath(); if (fill) { g.fillStyle = fill; g.fill(); } }
   drawTile(x, y, t) {
     const g = this.g, m = this.G.map;
+    const walls = () => { if (y === 0) this.wallAt(x, y, t, 'north'); if (x === 0) this.wallAt(x, y, t, 'west'); };
     if (t.kind === 'chasm') {
       const c = this.iso(x, y, 0);
       this.face([c.x - HW, c.y, c.x, c.y - HH, c.x + HW, c.y, c.x, c.y + HH], 'rgba(0,0,0,0.55)');
@@ -304,6 +303,7 @@ export class View {
       this.face([c.x - HW * 0.6, c.y + 6, c.x, c.y - HH * 0.6 + 6, c.x + HW * 0.6, c.y + 6, c.x, c.y + HH * 0.6 + 6], 'rgba(120,60,30,0.25)');
       g.restore();
       this.overlayAt(x, y, 0);
+      walls();
       return;
     }
     const c = this.iso(x, y, t.e);
@@ -311,6 +311,7 @@ export class View {
       this.face([c.x - HW, c.y, c.x, c.y - HH, c.x + HW, c.y, c.x, c.y + HH], 'rgba(0,0,0,0.55)');
       this.img(`${t.floor}_${t.d}`, c.x, c.y);
       this.overlayAt(x, y, t.e);
+      walls();
       return;
     }
     // cliff faces toward the viewer (custom: brick pattern sheared onto each side)
@@ -329,6 +330,7 @@ export class View {
       this.face([c.x - HW, c.y, c.x, c.y - HH, c.x + HW, c.y, c.x, c.y + HH], `rgba(255,200,90,${0.15 + pulse * 0.2})`);
       this.img('stairsSpiral_S', c.x, c.y);
     }
+    walls();
     if (t.prop) {
       this.img(`${t.prop.k}_${t.prop.d}`, c.x, c.y);
       const ch = t.prop.chest && this.G.map.chests.find(q => q.x === x && q.y === y);
