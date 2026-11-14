@@ -194,12 +194,12 @@ async function act(fn, { quiet = false } = {}) {
   if (sel) clearSel();
   if (mode.kind === 'ware') mode = { kind: 'idle' };
   busy = true;
-  shown = { hp: G.hero.hp, ward: G.hero.ward || 0 }; // the HUD follows the effects, not the final state
+  shown = view.shown = { hp: G.hero.hp, ward: G.hero.ward || 0 }; // the HUD follows the effects, not the final state
   const r = fn();
-  if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; shown = null; refresh(); return r; }
+  if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; shown = view.shown = null; refresh(); return r; }
   refresh();
   await playFx();
-  shown = null;
+  shown = view.shown = null;
   busy = false;
   if (mode.kind === 'power' && !R.powerUsable(G, mode.p) && !mode.keep) mode = { kind: 'idle' };
   refresh();

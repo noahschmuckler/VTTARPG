@@ -142,11 +142,12 @@ export class View {
         d.flash = 1;
         if (e.id !== 'hero') { const f = this.unit(e.id); d.hp = Math.max(0, (d.hp ?? f.hp) - (f.type === 'minion' ? 1 : e.n)); }
         const txt = e.id === 'hero' ? (e.n ? `-${fmt(e.n)}` : (e.warded ? 'Warded' : '0')) : (this.unit(e.id)?.type === 'minion' ? (e.crit ? 'CRIT' : '') : fmt(e.n));
-        if (txt) this.float(d, txt, e.id === 'hero' ? '#ff5a4a' : e.crit ? '#ffd24a' : '#fff', e.crit ? 1.5 : 1.1);
+        if (e.id === 'hero' && e.warded) this.float(d, `🛡 -${fmt(e.warded)}`, '#f3d98e', 1, e.n ? 22 : 0); // ward soaked this much
+        if (txt && !(e.id === 'hero' && !e.n && e.warded)) this.float(d, txt, e.id === 'hero' ? '#ff5a4a' : e.crit ? '#ffd24a' : '#fff', e.crit ? 1.5 : 1.1);
         if (e.label) this.float(d, e.label, '#ffb08a', 0.8, -18);
         if (e.id === 'hero' && e.n) this.shake = Math.min(1, 0.3 + e.n / 1500);
         if (e.id !== 'hero' && d.anim === 'idle') this.once(d, 'hit', 0.25);
-        return this.wait(0.12);
+        return this.wait(e.id === 'hero' ? 0.32 : 0.12); // a beat per blow on the hero, so each one reads
       }
       case 'heal': { const d = this.ensure(e.id); if (d) { this.float(d, `+${fmt(e.n)}`, '#7ee07e', 1.1); if (e.id !== 'hero') d.hp = Math.min(d.maxHp, d.hp + e.n); this.ring(d, '#7ee07e', 0.6); } return this.wait(0.1); }
       case 'ward': { const d = this.ensure('hero'); this.float(d, `+${fmt(e.n)} ward`, '#f3d98e', 1); this.ring(d, '#f3d98e', 0.7); return this.wait(0.1); }
@@ -462,7 +463,8 @@ export class View {
     }
     if (isHero) {
       const s = this.G.hero;
-      const badges = [G.hidden && '👁', G.pit && '🕳', s.ward > 0 && `🛡${fmt(s.ward)}`].filter(Boolean).join(' ');
+      const ward = this.shown ? this.shown.ward : s.ward; // while effects play, follow them rather than the final state
+      const badges = [G.hidden && '👁', G.pit && '🕳', ward > 0 && `🛡${fmt(ward)}`].filter(Boolean).join(' ');
       if (badges) { g.font = '700 13px sans-serif'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(badges, c.x, top); g.fillStyle = '#f3d98e'; g.fillText(badges, c.x, top); }
     }
   }

@@ -857,8 +857,8 @@ function foeAttack(G, f, rng) {
   fx(G, { t: 'anim', id: f.id, a: 'attack', face: G.pos });
   if (f.reach > 1) fx(G, { t: 'bolt', from: { x: f.x, y: f.y }, to: { ...G.pos }, cls: 'arrow' });
   fx(G, { t: 'dice', who: f.name, label: `${f.name} attacks${D.surrounded ? ' (surrounded)' : ''}${D.higher ? ' (from above)' : ''}`, dice, landOn: D.landOn, defense: true });
-  if (landed) hurtHero(G, landed * f.damage, { from: f, label: `${landed} blow${landed > 1 ? 's' : ''}` });
-  else fx(G, { t: 'text', id: 'hero', text: 'Blocked', color: '#cfd8e3' });
+  for (let i = 0; i < landed && G.stage === 'scene'; i++) hurtHero(G, f.damage, { from: f, label: landed > 1 ? `Blow ${i + 1} of ${landed}` : 'Blow' }); // one blow at a time
+  if (!landed) fx(G, { t: 'text', id: 'hero', text: 'Blocked', color: '#cfd8e3' });
   if (G.stage !== 'scene') return;
   if (foeHas(f, 'leech')) {
     const lost = -gainEnergy(G, -10);
