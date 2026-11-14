@@ -1,12 +1,13 @@
 # Delvers' Descent
 
-A solo, isometric (3/4 view), turn-based tactics ARPG built on the **Delvers' Ledger** rules from
-[ttarpg](https://github.com/noahschmuckler/ttarpg). One hero, three acts, ten scenes, and the Eighth Gate at the bottom.
+A single-player, isometric (3/4 view), turn-based tactics ARPG built on the **Delvers' Ledger** rules from
+[ttarpg](https://github.com/noahschmuckler/ttarpg). Lead a party of 1 to 4 heroes (you control them all) through three acts
+and eleven scenes to the Eighth Gate.
 
 ```bash
 npm start      # http://localhost:8790  (any static server works; there is no build step)
 npm test       # rules tests, including a bot that clears Act I with every calling
-npm run sim    # balance sim: the bot plays the whole campaign with each calling
+npm run sim    # balance sim: the bot plays the whole campaign with each calling and several parties
 npm run deploy # Cloudflare Worker: https://delvers-descent.noah-schmuckler.workers.dev
 ```
 
@@ -19,6 +20,7 @@ The game imports the tabletop engine unchanged (`src/ledger/` is a copy of `ttar
 
 | Ledger piece | In the video game |
 |---|---|
+| A party (`order`, `characters`) | Pick 1–4 callings. Each hero has their own move and action per round; switch by tapping them or with Next (Tab), then End round. Foes go for the nearest hero they can reach. A hero at 0 health is down until the scene is clear; the run ends only if everyone falls. Gear is shared through one satchel; Favour and wares are shared too. |
 | Five callings (`CLASSES`) | Ironclad, Runepriest, Ranger, Arcanist, Shadowblade: same health, armor, dice, damage, move, reach and powers. |
 | Dice pool attacks | Roll d6s; every 4+ is a hit, 6s crit. Hits form a pool you spend one at a time by clicking foes in reach, choosing crit or plain hit (or Auto: crits to elites and bosses, hits to minions). |
 | One move + one action | Walk (blue squares), then Attack, a Power or Sprint. Attack powers prime the attack; move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) move you, then you attack in the same action. Rolled hits keep until you end your turn. Once a scene is clear, turns stop and you walk freely. |
@@ -30,8 +32,8 @@ The game imports the tabletop engine unchanged (`src/ledger/` is a copy of `ttar
 | Adventure planner | `planScene` sizes every scene (skirmish, swarm, elite pack, gauntlet, boss) against the hero as each act began, with waves of reinforcements. |
 | The Rakshasa | Between acts: sell gear for Favour, buy boons and wares, play Three-Card Crown. |
 
-Solo adaptations (all in `src/game/rules.js`, `SOLO` and `SPECS`): Rune of Recall swaps with a foe, ally-only effects
-apply to the hero, minion counts are boosted for a grid, big foes hit a little softer, and you catch your breath
+Grid adaptations (all in `src/game/rules.js`, `SOLO` and `SPECS`): minion counts are boosted for a grid (more for a lone
+hero), a lone hero's foes hit a little softer, Rune of Recall can also swap with a foe, and the party catches its breath
 (35% health) after each scene.
 
 ## Controls

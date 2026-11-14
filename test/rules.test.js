@@ -130,7 +130,36 @@ test('Leaping Strike leaves the attack open; hits survive moving; a cleared scen
   assert.equal(R.strikeLeft(G), 0, 'hits gone at end of turn');
   for (const f of G.foes) f.dead = true;
   G.waves = []; G.turn.move = 0;
-  R.useWare(G, G.hero.consumables[0].id, rng); // any action re-checks the scene
+  R.useWare(G, G.wares[0].id, rng); // any action re-checks the scene
   assert.ok(G.cleared);
   assert.ok(R.heroMoves(G).size > 20, 'free movement once clear');
+});
+
+test('a party: each hero has their own turn; foes go for the nearest hero; ally powers reach allies', () => {
+  const rng = rngFrom(31), G = R.newRun([{ cls: 'ironclad' }, { cls: 'runepriest' }, { cls: 'ranger' }], rng);
+  R.startScene(G, rng);
+  assert.equal(G.party.length, 3);
+  const spots = new Set(G.party.map(h => key(h.pos.x, h.pos.y)));
+  assert.equal(spots.size, 3, 'heroes start on separate squares');
+  // one hero acting doesn't spend another's action
+  R.sprint(G);
+  R.selectHero(G, 1);
+  assert.ok(R.canAct(G), 'the second hero can still act');
+  // the Runepriest swaps with the Ironclad
+  G.hero.energy = 100;
+  const recall = R.powerList(G).find(p => p.key === 'recall');
+  const ally = R.powerTargets(G, recall).find(t => t.ally);
+  assert.ok(ally, 'an ally is a valid Rune of Recall target');
+  const before = { ...G.party[0].pos }, mine = { ...G.pos };
+  assert.ok(R.usePower(G, 'recall', { ids: [ally.id] }, rng).ok);
+  assert.deepEqual(G.pos, before); assert.deepEqual(G.party[0].pos, mine);
+  assert.ok(G.party[0].ward >= 300 && G.party[1].ward >= 300, 'both gain a ward');
+  // downed heroes don't end the run; the whole party does
+  G.party[0].hp = 1; R.selectHero(G, 0);
+  G.foes = [{ id: 'z', name: 'Brute', type: 'elite', x: G.pos.x + 1, y: G.pos.y, hp: 9000, maxHp: 9000, armor: 0, damage: 5000, attacks: 6, move: 4, reach: 1, abilities: [] }];
+  for (const h of G.party.slice(1)) h.pos = { x: 1, y: 1 + G.party.indexOf(h) };
+  R.endTurn(G, rngFrom(2));
+  assert.equal(G.party[0].hp, 0);
+  assert.equal(G.stage, 'scene', 'the others fight on');
+  assert.notEqual(G.active, 0, 'control moves to a standing hero');
 });

@@ -3,12 +3,15 @@
 import { A, heroSheet } from './assets.js';
 import { tile, key } from './grid.js';
 import { HERO_COLOR } from './content.js';
+import { derive } from '../ledger/engine.js';
 
 export const HW = 64, HH = 32, EH = 30, DEPTH = 3; // Kenney floors are 2:1 diamonds: 128 × 64
 // Only full-width wall pieces, so the back walls read as one continuous run (no lone pillars or collapsed gaps).
 const WALLS = ['stoneWall', 'stoneWall', 'stoneWallAged', 'stoneWallWindow', 'stoneWall', 'stoneWallAged', 'stoneWallWindowBars', 'stoneWall', 'stoneWallDoorClosed'];
 const BOLT = { arcanist: '#ff9a3d', runepriest: '#5fd3c4', ranger: '#e9e2d0', arrow: '#e9e2d0', lightning: '#9fd0ff', hammer: '#5fd3c4' };
 const ease = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+
+const isHeroId = id => typeof id === 'string' && /^h\d+$/.test(id);
 
 export class View {
   constructor(canvas) {
@@ -38,7 +41,7 @@ export class View {
     this.G = G;
     this.disp.clear();
     this.vfx = []; this.texts = []; this.tw = [];
-    this.ensure('hero');
+    for (const h of G.party) if (h.pos) this.ensure(h.hid);
     for (const f of G.foes) if (!f.dead) this.ensure(f.id);
     // fit most of the map on screen, then look at the hero
     const span = (G.map.w + G.map.h) * HW;
@@ -48,20 +51,25 @@ export class View {
     const t = this.iso(mid.x, mid.y, 0);
     this.cam.x = t.x; this.cam.y = t.y;
   }
-  unit(id) { return id === 'hero' ? { ...this.G.pos, hero: true } : this.G.foes.find(f => f.id === id); }
+  unit(id) {
+    if (isHeroId(id)) { const h = this.G.party.find(q => q.hid === id); return h && h.pos ? { ...h.pos, hero: h, hp: h.hp, maxHp: 1 } : null; }
+    return this.G.foes.find(f => f.id === id);
+  }
   ensure(id) {
     if (this.disp.has(id)) return this.disp.get(id);
     const u = this.unit(id);
     if (!u) return null;
     const e = this.elev(u.x, u.y);
-    const d = { id, x: u.x, y: u.y, e, dir: id === 'hero' ? 5 : 1, anim: 'idle', at: Math.random() * 3, once: null, alpha: 1, flash: 0, sink: 0, hp: u.hp, maxHp: u.maxHp, hero: id === 'hero' };
+    const d = { id, x: u.x, y: u.y, e, dir: isHeroId(id) ? 5 : 1, anim: 'idle', at: Math.random() * 3, once: null, alpha: u.hero && u.hero.hp <= 0 ? 0.3 : 1, flash: 0, sink: 0, hp: u.hp, maxHp: u.maxHp, hero: isHeroId(id) };
     this.disp.set(id, d);
     return d;
   }
   elev(x, y) { const t = tile(this.G.map, Math.round(x), Math.round(y)); return t ? (t.kind === 'chasm' ? -1.2 : t.e) : 0; }
   iso(x, y, e = 0) { return { x: (x - y) * HW, y: (x + y) * HH - e * EH }; }
+  // offY: how far (CSS px) the middle of the visible map sits above the screen's middle, because of the HUD panels
   centerOn(p, now = false) {
     const t = this.iso(p.x, p.y, this.elev(p.x, p.y));
+    t.y += (this.offY || 0) / this.cam.zoom;
     if (now) { this.cam.x = t.x; this.cam.y = t.y; return; }
     const sx = this.cam.x, sy = this.cam.y;
     this.tween(0.35, k => { this.cam.x = sx + (t.x - sx) * ease(k); this.cam.y = sy + (t.y - sy) * ease(k); });
@@ -135,37 +143,45 @@ export class View {
         const d = this.ensure(e.id); if (!d) return;
         if (e.face) d.dir = this.dirTo(d, e.face);
         this.once(d, e.a === 'attack' ? 'attack' : 'act', 0.45);
-        return this.wait(e.id === 'hero' ? 0.18 : 0.28);
+        return this.wait(isHeroId(e.id) ? 0.18 : 0.28);
       }
       case 'dmg': {
         const d = this.ensure(e.id); if (!d) return;
         d.flash = 1;
-        if (e.id !== 'hero') { const f = this.unit(e.id); d.hp = Math.max(0, (d.hp ?? f.hp) - (f.type === 'minion' ? 1 : e.n)); }
-        const txt = e.id === 'hero' ? (e.n ? `-${fmt(e.n)}` : (e.warded ? 'Warded' : '0')) : (this.unit(e.id)?.type === 'minion' ? (e.crit ? 'CRIT' : '') : fmt(e.n));
-        if (e.id === 'hero' && e.warded) this.float(d, `🛡 -${fmt(e.warded)}`, '#f3d98e', 1, e.n ? 22 : 0); // ward soaked this much
-        if (txt && !(e.id === 'hero' && !e.n && e.warded)) this.float(d, txt, e.id === 'hero' ? '#ff5a4a' : e.crit ? '#ffd24a' : '#fff', e.crit ? 1.5 : 1.1);
+        if (!isHeroId(e.id)) { const f = this.unit(e.id); d.hp = Math.max(0, (d.hp ?? f.hp) - (f.type === 'minion' ? 1 : e.n)); }
+        const txt = isHeroId(e.id) ? (e.n ? `-${fmt(e.n)}` : (e.warded ? 'Warded' : '0')) : (this.unit(e.id)?.type === 'minion' ? (e.crit ? 'CRIT' : '') : fmt(e.n));
+        if (isHeroId(e.id) && e.warded) this.float(d, `🛡 -${fmt(e.warded)}`, '#f3d98e', 1, e.n ? 22 : 0); // ward soaked this much
+        if (txt && !(isHeroId(e.id) && !e.n && e.warded)) this.float(d, txt, isHeroId(e.id) ? '#ff5a4a' : e.crit ? '#ffd24a' : '#fff', e.crit ? 1.5 : 1.1);
         if (e.label) this.float(d, e.label, '#ffb08a', 0.8, -18);
-        if (e.id === 'hero' && e.n) this.shake = Math.min(1, 0.3 + e.n / 1500);
-        if (e.id !== 'hero' && d.anim === 'idle') this.once(d, 'hit', 0.25);
-        return this.wait(e.id === 'hero' ? 0.32 : 0.12); // a beat per blow on the hero, so each one reads
+        if (isHeroId(e.id) && e.n) this.shake = Math.min(1, 0.3 + e.n / 1500);
+        if (!isHeroId(e.id) && d.anim === 'idle') this.once(d, 'hit', 0.25);
+        return this.wait(isHeroId(e.id) ? 0.32 : 0.12); // a beat per blow on the hero, so each one reads
       }
-      case 'heal': { const d = this.ensure(e.id); if (d) { this.float(d, `+${fmt(e.n)}`, '#7ee07e', 1.1); if (e.id !== 'hero') d.hp = Math.min(d.maxHp, d.hp + e.n); this.ring(d, '#7ee07e', 0.6); } return this.wait(0.1); }
-      case 'ward': { const d = this.ensure('hero'); this.float(d, `+${fmt(e.n)} ward`, '#f3d98e', 1); this.ring(d, '#f3d98e', 0.7); return this.wait(0.1); }
+      case 'heal': { const d = this.ensure(e.id); if (d) { this.float(d, `+${fmt(e.n)}`, '#7ee07e', 1.1); if (!isHeroId(e.id)) d.hp = Math.min(d.maxHp, d.hp + e.n); this.ring(d, '#7ee07e', 0.6); } return this.wait(0.1); }
+      case 'ward': { const d = this.ensure(e.id); this.float(d, `+${fmt(e.n)} ward`, '#f3d98e', 1); this.ring(d, '#f3d98e', 0.7); return this.wait(0.1); }
       case 'text': { const d = this.ensure(e.id); if (d) this.float(d, e.text, e.color || '#fff', 0.9); return this.wait(0.05); }
       case 'die': {
         const d = this.ensure(e.id); if (!d) return;
         d.hp = 0;
         this.once(d, 'die', 0.7, true);
-        this.tween(1.4, k => { if (k > 0.55) d.alpha = Math.min(d.alpha, 1 - (k - 0.55) / 0.45); }, () => { if (e.id !== 'hero') this.disp.delete(e.id); });
+        if (isHeroId(e.id)) { this.puff(d, '#555'); this.tween(0.8, k => { d.alpha = 1 - 0.7 * k; d.sink = 6 * k; }); return this.wait(0.3); } // a downed hero stays, faded
+        this.tween(1.4, k => { if (k > 0.55) d.alpha = Math.min(d.alpha, 1 - (k - 0.55) / 0.45); }, () => this.disp.delete(e.id));
         return this.wait(0.15);
       }
       case 'fall': {
         const d = this.ensure(e.id); if (!d) return;
-        return this.tween(0.45, k => { d.sink = k * (e.id === 'hero' ? 26 : 60); if (e.id !== 'hero') d.alpha = 1 - k; });
+        return this.tween(0.45, k => { d.sink = k * (isHeroId(e.id) ? 26 : 60); if (!isHeroId(e.id)) d.alpha = 1 - k; });
       }
       case 'bolt': return this.bolt(e);
       case 'burst': return this.burst(e);
-      case 'hide': { const d = this.ensure('hero'); this.puff(d, '#776f88'); return this.wait(0.15); }
+      case 'revive': {
+        const d = this.ensure(e.id); if (!d) return;
+        const u = this.unit(e.id); d.x = u.x; d.y = u.y; d.e = this.elev(u.x, u.y);
+        d.anim = 'idle'; d.once = null; d.sink = 0;
+        this.ring(d, '#7ee07e', 0.8);
+        return this.tween(0.5, k => { d.alpha = 0.3 + 0.7 * k; });
+      }
+      case 'hide': { const d = this.ensure(e.id || this.G.hero.hid); this.puff(d, '#776f88'); return this.wait(0.15); }
       default: return;
     }
   }
@@ -178,12 +194,12 @@ export class View {
   async move(e) {
     const d = this.ensure(e.id);
     if (!d || !e.path || e.path.length < 2) { if (d && e.path?.length) { d.x = e.path[0].x; d.y = e.path[0].y; } return; }
-    const follow = e.id === 'hero';
+    const follow = e.id === this.G.hero?.hid;
     if (e.kind === 'walk') {
       for (let i = 1; i < e.path.length; i++) {
         const a = e.path[i - 1], b = e.path[i], ea = this.elev(a.x, a.y), eb = this.elev(b.x, b.y);
         d.dir = this.dirTo(a, b); d.anim = 'run'; d.once = null;
-        await this.tween(e.id === 'hero' ? 0.17 : 0.13, k => { d.x = a.x + (b.x - a.x) * k; d.y = a.y + (b.y - a.y) * k; d.e = ea + (eb - ea) * k + (eb > ea ? Math.sin(k * Math.PI) * 0.4 : 0); });
+        await this.tween(isHeroId(e.id) ? 0.17 : 0.13, k => { d.x = a.x + (b.x - a.x) * k; d.y = a.y + (b.y - a.y) * k; d.e = ea + (eb - ea) * k + (eb > ea ? Math.sin(k * Math.PI) * 0.4 : 0); });
       }
       d.anim = 'idle';
     } else if (e.kind === 'leap') {
@@ -405,22 +421,31 @@ export class View {
   drawUnit(d) {
     const G = this.G, g = this.g;
     const u = this.unit(d.id);
-    const isHero = d.id === 'hero';
+    const isHero = isHeroId(d.id), H = isHero ? u?.hero : null;
+    if (isHero && !H) return;
+    const active = isHero && H === G.hero && G.stage === 'scene' && !G.cleared;
     const sheetName = isHero ? 'hero' : u?.sprite || 'orc';
     const M = A.manifest.units[sheetName];
-    const img = isHero ? heroSheet(G.hero.cls) : A.units[sheetName];
+    const img = isHero ? heroSheet(H.cls) : A.units[sheetName];
     const c = this.iso(d.x, d.y, d.e);
     c.y += d.sink;
     const scale = isHero ? 1.35 : (u?.scale || 1) * 1.05;
-    let alpha = d.alpha * (isHero && G.hidden ? 0.45 : 1);
-    if (isHero && G.pit) c.y += 6;
+    let alpha = d.alpha * (isHero && H.hidden ? 0.45 : 1);
+    if (isHero && H.pit) c.y += 6;
     // shadow + ring
     g.save();
     g.globalAlpha = alpha;
     const ringR = isHero ? 22 : 18 * (u?.scale || 1);
     g.fillStyle = 'rgba(0,0,0,0.35)';
     g.beginPath(); g.ellipse(c.x, c.y, ringR, ringR * 0.55, 0, 0, 7); g.fill();
-    const rc = isHero ? HERO_COLOR[G.hero.cls] : u?.type === 'boss' ? '#ff4a3a' : u?.type === 'elite' ? '#ffb347' : null;
+    const rc = isHero ? HERO_COLOR[H.cls] : u?.type === 'boss' ? '#ff4a3a' : u?.type === 'elite' ? '#ffb347' : null;
+    if (active) { // the hero being controlled: a bright pulsing ring
+      const p = 0.5 + 0.5 * Math.sin(this.time * 4);
+      g.strokeStyle = '#fff6d0'; g.globalAlpha = 0.5 + 0.4 * p; g.lineWidth = 3;
+      g.beginPath(); g.ellipse(c.x, c.y, ringR + 6 + p * 2, (ringR + 6 + p * 2) * 0.55, 0, 0, 7); g.stroke();
+      g.globalAlpha = alpha;
+    }
+    if (this.hl.allyTargets?.has(d.id)) { g.strokeStyle = '#7ee07e'; g.lineWidth = 2.5; g.globalAlpha = alpha * (0.6 + 0.4 * Math.sin(this.time * 6)); g.beginPath(); g.ellipse(c.x, c.y, ringR + 4, (ringR + 4) * 0.55, 0, 0, 7); g.stroke(); g.globalAlpha = alpha; }
     if (rc && !(this.hl.foeHover === d.id)) { g.strokeStyle = rc; g.globalAlpha = alpha * 0.8; g.lineWidth = 2; g.beginPath(); g.ellipse(c.x, c.y, ringR, ringR * 0.55, 0, 0, 7); g.stroke(); }
     if (this.hl.inReach?.has(d.id)) { g.strokeStyle = '#ff5a4a'; g.lineWidth = 2.5; g.globalAlpha = alpha * (0.6 + 0.4 * Math.sin(this.time * 6)); g.beginPath(); g.ellipse(c.x, c.y, ringR + 4, (ringR + 4) * 0.55, 0, 0, 7); g.stroke(); }
     g.globalAlpha = alpha;
@@ -445,7 +470,7 @@ export class View {
     }
     g.restore();
     // bars and badges
-    if (d.alpha < 0.5) return;
+    if (d.alpha < 0.25) return;
     const top = c.y - (isHero ? 92 : Math.min(140, 62 * (u?.scale || 1) + 20));
     if (!isHero && u && !u.dead) {
       const big = u.type !== 'minion';
@@ -462,9 +487,19 @@ export class View {
       }
     }
     if (isHero) {
-      const s = this.G.hero;
-      const ward = this.shown ? this.shown.ward : s.ward; // while effects play, follow them rather than the final state
-      const badges = [G.hidden && '👁', G.pit && '🕳', ward > 0 && `🛡${fmt(ward)}`].filter(Boolean).join(' ');
+      const sh = this.shown?.[H.hid];
+      const hp = sh ? sh.hp : H.hp, ward = sh ? sh.ward : H.ward; // while effects play, follow them rather than the final state
+      const mx = derive(H).maxHp;
+      if (G.party.length > 1 || hp < mx) { // a small health bar over each hero
+        const w = 40;
+        g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(c.x - w / 2 - 1, top + 5, w + 2, 6);
+        g.fillStyle = hp / mx > 0.35 ? '#5fc35f' : '#e0503c'; g.fillRect(c.x - w / 2, top + 6, w * Math.max(0, hp / mx), 4);
+      }
+      if (G.party.length > 1) {
+        g.font = `${active ? 700 : 600} 11px "Cinzel", Georgia, serif`; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.strokeText(H.name, c.x, top - 16); g.fillStyle = active ? '#fff6d0' : HERO_COLOR[H.cls]; g.fillText(H.name, c.x, top - 16);
+      }
+      const badges = [H.hp <= 0 && '✖ down', H.hidden && '👁', H.pit && '🕳', ward > 0 && `🛡${fmt(ward)}`].filter(Boolean).join(' ');
       if (badges) { g.font = '700 13px sans-serif'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(badges, c.x, top); g.fillStyle = '#f3d98e'; g.fillText(badges, c.x, top); }
     }
   }

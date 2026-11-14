@@ -1,6 +1,10 @@
-// Solo tactics rules: the Delvers' Ledger engine (classes, dice pools, gear, sets, foe abilities,
-// the adventure planner, the Rakshasa) played out on an isometric grid by one hero.
+// Party tactics rules: the Delvers' Ledger engine (classes, dice pools, gear, sets, foe abilities,
+// the adventure planner, the Rakshasa) played out on an isometric grid by a party of 1–4 heroes, one player.
 // Pure state + functions. Every visible thing that happens is also pushed onto G.fx for the renderer.
+//
+// G.party holds the heroes; G.active is the one being controlled. G.hero, G.pos, G.turn, G.strike, G.pit and
+// G.hidden are accessors onto the active hero (bindParty), so most rules read as if for one hero; anything that
+// acts on another hero (foes attacking, party heals) runs inside withHero().
 import {
   CLASSES, ENEMY_TYPES, FOE_ABILITIES, HIDDEN_DICE, derive, powersFor, makeItem, randomRarity, landOn, fmt,
   setCounts, activeSynergies, SETS, SYNERGIES, CLASS_SETS, newCharacter, partyDamagePerRound, RARITY_ORDER, statsText, synergyText, SLOTS,
@@ -13,32 +17,64 @@ import { SOLO_GATE, rosterFor } from './content.js';
 
 export { CLASSES, FOE_ABILITIES, CONSUMABLES, BOONS, SELL_VALUE, SETS, SYNERGIES, fmt, derive, powersFor, statsText, synergyText, boonPrice, boonLocked, SLOTS };
 
-// ------------------------------------------------------------------ tuning for one hero on a grid
+// ------------------------------------------------------------------ tuning for a small party on a grid
 export const SOLO = {
-  minionBoost: 2.5,     // the planner sizes minions for a table; a solo grid wants more bodies (they die to one hit)
+  minionBoost: 2.5,     // the planner sizes minions for a table; a lone hero on a grid wants more bodies (they die to one hit)
+  partyBoost: 2.0,      // the same, for a party of 2+
   waveGap: 2,           // later waves arrive at the end of round 1 + 2, 1 + 4, …
   breather: 0.35,       // heal this share of max health after each cleared scene
   elitePitShare: 0.3,   // an elite knocked into a chasm loses this share of its max health and climbs out
   throes: 300,
-  threat: 0.8,         // big foes' damage per blow, against one hero who has no one to share the blows with
+  threat: 0.8,         // big foes' damage per blow against a lone hero, who has no one to share the blows with
+  partyThreat: 1.1,     // … and against a party
+  revive: 0.25,         // heroes downed in a scene get up with this share of health once it is clear
+  maxParty: 4,
 };
+export const DEFAULT_NAMES = { ironclad: 'Brannoc', runepriest: 'Hild', ranger: 'Tess', arcanist: 'Orrin', shadowblade: 'Vex' };
 const REACH_TILES = r => (r ? r : 1); // the ledger's inches are squares here; 0 = adjacent
 
 // ------------------------------------------------------------------ run setup
-export function newRun(name, cls, rng) {
-  const hero = newCharacter(name || CLASSES[cls]?.name || 'Hero', cls, rng);
-  hero.favour = 2;
-  hero.consumables = [{ id: 'w1', key: 'draught' }];
-  hero.unlocked = [];
-  const G = { v: 1, adv: SOLO_GATE, act: 0, scene: 0, hero, stage: 'scene', log: [], fx: [], stats: { rounds: 0, scenes: 0 } };
+// members: [{ name, cls }, …] (1–4). The old solo form newRun(name, cls, rng) still works.
+export function newRun(members, cls, rng) {
+  if (typeof members === 'string' || !Array.isArray(members)) members = [{ name: members, cls }];
+  else rng = cls;
+  members = members.slice(0, SOLO.maxParty);
+  const party = members.map((m, i) => {
+    const h = newCharacter(m.name || DEFAULT_NAMES[m.cls] || CLASSES[m.cls]?.name || 'Hero', m.cls, rng);
+    Object.assign(h, { hid: `h${i}`, unlocked: [], pos: null, turn: null, strike: null, pit: null, hidden: null });
+    return h;
+  });
+  const G = { v: 2, adv: SOLO_GATE, act: 0, scene: 0, party, active: 0, bag: [], favour: 2, wares: party.map((h, i) => ({ id: `w${i}`, key: 'draught' })), stage: 'scene', log: [], fx: [], stats: { rounds: 0, scenes: 0 } };
+  bindParty(G);
   G.anchor = anchorFor(G);
   return G;
 }
-// The act anchor: the hero's power when the act begins (foes in the act are sized from it).
+// Accessors onto the active hero. Not enumerable, so saves (JSON) hold only G.party; call again after loading.
+export function bindParty(G) {
+  const on = k => ({ get() { return G.party[G.active]?.[k]; }, set(v) { G.party[G.active][k] = v; }, configurable: true, enumerable: false });
+  Object.defineProperty(G, 'hero', { get() { return G.party[G.active]; }, configurable: true, enumerable: false });
+  for (const k of ['pos', 'turn', 'strike', 'pit', 'hidden']) Object.defineProperty(G, k, on(k));
+  return G;
+}
+// Run fn with hero h as the active one (foes attacking, party-wide effects), then switch back.
+function withHero(G, h, fn) {
+  const was = G.active, i = G.party.indexOf(h);
+  if (i < 0) return undefined;
+  G.active = i;
+  try { return fn(); } finally { G.active = was; }
+}
+export const standing = G => G.party.filter(h => h.hp > 0);
+export const heroAt = (G, x, y) => G.party.find(h => h.hp > 0 && h.pos && h.pos.x === x && h.pos.y === y);
+export function selectHero(G, i) {
+  if (!G.party[i]) return err('No such hero');
+  G.active = i;
+  return ok();
+}
+// The act anchor: the party's power when the act begins (foes in the act are sized from it).
 function anchorFor(G) {
-  const state = { order: ['h'], characters: { h: G.hero }, round: 1 };
+  const state = { order: G.party.map(h => h.hid), characters: Object.fromEntries(G.party.map(h => [h.hid, h])), round: 1 };
   const p = partyPower(state, derive, partyDamagePerRound);
-  return { ...p, kills: p.kills * SOLO.minionBoost };
+  return { ...p, kills: p.kills * (G.party.length > 1 ? SOLO.partyBoost : SOLO.minionBoost) };
 }
 export const sceneDef = G => G.adv.acts[G.act]?.scenes[G.scene];
 export const isLastScene = G => G.act === G.adv.acts.length - 1 && G.scene === G.adv.acts[G.act].scenes.length - 1;
@@ -47,39 +83,44 @@ const sceneIndex = G => flatIndex(G.adv, G.act, G.scene);
 export function startScene(G, rng) {
   const sc = sceneDef(G);
   G.map = generateMap(sc.arena, rng, { chests: sc.chests || 0 });
-  G.pos = { ...G.map.start };
   G.foes = [];
   G.round = 1;
-  G.strike = null;
-  G.pit = null;
-  G.hidden = null;
   G.zone = null;
   G.cleared = false;
   G.stage = 'scene';
-  G.hero.buffs = {};
-  G.hero.ward = 0;
-  G.facing = 5;
+  G.active = 0;
+  for (const h of G.party) {
+    Object.assign(h, { pos: null, strike: null, pit: null, hidden: null, buffs: {}, ward: 0 });
+    if (h.hp <= 0) h.hp = Math.round(derive(h).maxHp * SOLO.revive);
+    h.downed = false;
+  }
+  // the party enters together, a square apart so each hero is easy to pick out
+  const offs = [[0, 0], [-2, 0], [0, -2], [-2, -2]];
+  G.party.forEach((h, i) => { const [dx, dy] = offs[i % 4]; h.pos = freeNear(G, { x: G.map.start.x + dx, y: G.map.start.y + dy }) || freeNear(G, G.map.start) || { ...G.map.start }; });
   const plan = planScene(G.adv, G.act, G.scene, G.anchor);
   G.pressure = plan.pressure;
   G.waves = plan.waves.map(w => ({ due: w.at === 0 ? 0 : 1 + w.at * SOLO.waveGap, spawns: w.spawns }));
-  G.checkpoint = JSON.stringify({ hero: G.hero, act: G.act, scene: G.scene, anchor: G.anchor, stats: G.stats });
-  freshTurn(G);
+  G.checkpoint = JSON.stringify({ party: G.party, bag: G.bag, favour: G.favour, wares: G.wares, act: G.act, scene: G.scene, anchor: G.anchor, stats: G.stats });
+  for (const h of G.party) h.turn = freshTurnFor(h);
   arriveWaves(G, rng, true);
   log(G, `${sc.name}. ${plan.template}, pressure ${plan.pressure}.`, 'scene');
   return G;
 }
-function freshTurn(G) {
-  G.turn = { move: derive(G.hero).move, acted: null, ware: false };
-}
+const freshTurnFor = h => ({ move: derive(h).move, acted: null, ware: false });
 
 // ------------------------------------------------------------------ queries used by the UI
 export const heroStats = G => derive(G.hero);
 export const living = G => G.foes.filter(f => !f.dead);
 export const foeAt = (G, x, y) => G.foes.find(f => !f.dead && f.x === x && f.y === y);
-export const occupied = (G, x, y, except) => (G.pos.x === x && G.pos.y === y && except !== 'hero') || G.foes.some(f => !f.dead && f !== except && f.x === x && f.y === y);
+// except: 'hero' (the active hero), a hero object, or a foe object, which doesn't count as blocking.
+export const occupied = (G, x, y, except) => {
+  const skip = except === 'hero' ? G.hero : except;
+  return G.party.some(h => h !== skip && h.hp > 0 && h.pos && !h.pit && h.pos.x === x && h.pos.y === y) || G.foes.some(f => !f.dead && f !== skip && f.x === x && f.y === y);
+};
 export const heroReach = G => REACH_TILES(heroStats(G).reach);
 export const heroTile = G => tile(G.map, G.pos.x, G.pos.y);
 export const canAct = G => G.stage === 'scene' && G.hero.hp > 0 && !G.pit && !G.turn.acted;
+export const heroDone = (G, h) => h.hp <= 0 || (h.turn?.acted && h.turn.acted !== 'attackPower' && !(h.strike && (h.strike.hits + h.strike.crits + h.strike.minion)) && !h.turn.move);
 export const canAttack = G => G.stage === 'scene' && G.hero.hp > 0 && !G.pit && (!G.turn.acted || G.turn.acted === 'attackPower');
 
 // Can `a` (at elevation ea) strike or shoot `b`? Melee: adjacent and at most one level apart. Ranged: in range with sight.
@@ -122,11 +163,12 @@ function hurtHero(G, amount, { ignoreArmor = false, from = null, label = '' } = 
   ch.ward = (ch.ward || 0) - warded;
   net -= warded;
   ch.hp = Math.max(0, ch.hp - net);
-  fx(G, { t: 'dmg', id: 'hero', n: net, warded, blocked, from: from?.id, label });
-  if (ch.hp <= 0 && G.stage === 'scene') {
-    G.stage = 'dead';
-    fx(G, { t: 'die', id: 'hero' });
-    log(G, `${ch.name} falls.`, 'hurt');
+  fx(G, { t: 'dmg', id: G.hero.hid, n: net, warded, blocked, from: from?.id, label });
+  if (ch.hp <= 0 && G.stage === 'scene' && !ch.downed) {
+    ch.downed = true; ch.strike = null; ch.pit = null; ch.hidden = null; ch.buffs = {};
+    fx(G, { t: 'die', id: G.hero.hid });
+    log(G, `${ch.name} is down!`, 'hurt');
+    if (!standing(G).length) { G.stage = 'dead'; log(G, 'The whole party has fallen.', 'hurt'); }
   }
   return net;
 }
@@ -138,11 +180,17 @@ function gainEnergy(G, n) {
 function heal(G, pct) {
   const m = derive(G.hero).maxHp, before = G.hero.hp;
   G.hero.hp = Math.min(m, G.hero.hp + Math.round(m * pct / 100));
-  if (G.hero.hp > before) fx(G, { t: 'heal', id: 'hero', n: G.hero.hp - before });
+  if (G.hero.hp > before) fx(G, { t: 'heal', id: G.hero.hid, n: G.hero.hp - before });
+}
+// Party effects: on every standing hero (who = 'party') or every other standing hero ('others').
+function eachHero(G, who, fn) {
+  const me = G.hero;
+  const list = who === 'party' ? standing(G) : who === 'others' ? standing(G).filter(h => h !== me) : [me];
+  for (const h of list) withHero(G, h, fn);
 }
 function ward(G, n) {
   G.hero.ward = (G.hero.ward || 0) + n;
-  fx(G, { t: 'ward', id: 'hero', n });
+  fx(G, { t: 'ward', id: G.hero.hid, n });
 }
 
 // ------------------------------------------------------------------ foes
@@ -153,7 +201,7 @@ function spawnFoe(G, sp, at, rng) {
   const f = {
     id: `f${Date.now().toString(36)}${(foeSeq++).toString(36)}`, name: sp.name || T.label, type: sp.etype in ENEMY_TYPES ? sp.etype : 'minion',
     sprite: R.sprite, scale: R.scale * (sp.etype === 'boss' ? 1.15 : 1), move: R.move, reach: R.reach, fly: !!R.fly,
-    hp: big ? sp.hp : T.hp, armor: big ? sp.armor : T.armor, damage: big ? Math.round(sp.damage * SOLO.threat / 10) * 10 : T.damage, attacks: big ? sp.attacks : T.attacks,
+    hp: big ? sp.hp : T.hp, armor: big ? sp.armor : T.armor, damage: big ? Math.round(sp.damage * (G.party.length > 1 ? SOLO.partyThreat : SOLO.threat) / 10) * 10 : T.damage, attacks: big ? sp.attacks : T.attacks,
     abilities: big ? (sp.abilities || []).filter(k => FOE_ABILITIES[k]) : [], ability: sp.ability || '', x: at.x, y: at.y, facing: 1,
   };
   f.maxHp = f.hp;
@@ -166,7 +214,7 @@ function freeNear(G, p, avoidHero = false) {
   const seen = new Set([key(p.x, p.y)]), q = [p];
   while (q.length) {
     const c = q.shift(), t = tile(G.map, c.x, c.y);
-    if (standable(t) && !occupied(G, c.x, c.y) && !(avoidHero && dist(c, G.pos) < 3)) return c;
+    if (standable(t) && !occupied(G, c.x, c.y) && !(avoidHero && standing(G).some(h => h.pos && dist(c, h.pos) < 3))) return c;
     for (const [dx, dy] of DIRS8) {
       const n = { x: c.x + dx, y: c.y + dy };
       if (!tile(G.map, n.x, n.y) || seen.has(key(n.x, n.y))) continue;
@@ -226,7 +274,7 @@ function killFoe(G, f, rng, how = '') {
   if (foeHas(f, 'throes')) {
     announce(G, f, 'throes');
     fx(G, { t: 'burst', at: { x: f.x, y: f.y }, kind: 'throes' });
-    hurtHero(G, SOLO.throes, { from: f, label: 'Death Throes' });
+    for (const h of standing(G)) withHero(G, h, () => hurtHero(G, SOLO.throes, { from: f, label: 'Death Throes' }));
   }
   if (f.type === 'elite') dropLoot(G, rng, 2, 'magic', `${f.name}'s hoard`);
   if (f.type === 'boss') dropLoot(G, rng, 4, 'rare', `${f.name}'s hoard`);
@@ -235,8 +283,16 @@ function killFoe(G, f, rng, how = '') {
 function checkCleared(G) {
   if (G.cleared || G.stage !== 'scene' || living(G).length || G.waves.length) return;
   G.cleared = true;
-  G.strike = null;
-  heal(G, SOLO.breather * 100);
+  for (const h of G.party) {
+    h.strike = null;
+    if (h.hp <= 0) {
+      h.hp = Math.round(derive(h).maxHp * SOLO.revive); h.downed = false;
+      if (h.pit) h.pit = null;
+      h.pos = freeNear(G, h.pos || G.map.start) || h.pos;
+      fx(G, { t: 'revive', id: h.hid });
+      log(G, `${h.name} gets back up.`, 'scene');
+    } else withHero(G, h, () => heal(G, SOLO.breather * 100));
+  }
   log(G, 'The scene is clear. The stair down is open (west wall).', 'scene');
   fx(G, { t: 'cleared' });
 }
@@ -264,7 +320,7 @@ export function moveHero(G, x, y, rng) {
     const from = path[i - 1], to = path[i];
     const blows = G.hidden ? [] : living(G).filter(f => adjacent(f, from) && !adjacent(f, to) && inReach(G, f, from, 1, f.fly));
     G.pos = { ...to };
-    fx(G, { t: 'move', id: 'hero', path: [from, to], kind: 'walk' });
+    fx(G, { t: 'move', id: G.hero.hid, path: [from, to], kind: 'walk' });
     for (const f of blows) {
       freeBlow(G, f, rng);
       if (G.hero.hp <= 0) return ok();
@@ -276,8 +332,8 @@ function freeBlow(G, f, rng) {
   const s = derive(G.hero), r = d6(rng), lands = r <= landOn(s);
   fx(G, { t: 'anim', id: f.id, a: 'attack', face: G.pos });
   fx(G, { t: 'dice', who: f.name, label: 'Free blow', dice: [r], landOn: landOn(s), defense: true });
-  if (lands) { log(G, `${f.name} lands a free blow as you break away.`, 'hurt'); hurtHero(G, f.damage, { from: f, label: 'Free blow' }); }
-  else { fx(G, { t: 'text', id: 'hero', text: 'Dodged', color: '#cfd8e3' }); }
+  if (lands) { log(G, `${f.name} lands a free blow as ${G.hero.name} breaks away.`, 'hurt'); hurtHero(G, f.damage, { from: f, label: 'Free blow' }); }
+  else { fx(G, { t: 'text', id: G.hero.hid, text: 'Dodged', color: '#cfd8e3' }); }
 }
 export function sprint(G) {
   if (!canAct(G)) return err('You have already acted');
@@ -308,7 +364,7 @@ export function attack(G, rng) {
   G.hero.buffs = {};
   G.turn.acted = 'attack';
   if (G.hidden) { G.hidden = null; log(G, `${G.hero.name} strikes from hiding!`, 'hit'); }
-  fx(G, { t: 'anim', id: 'hero', a: 'act' });
+  fx(G, { t: 'anim', id: G.hero.hid, a: 'act' });
   fx(G, { t: 'dice', who: G.hero.name, label: label ? `Attack (${label})` : 'Attack', dice, hitOn: 4 });
   log(G, hits ? `${G.hero.name} rolls ${hits} hit${hits === 1 ? '' : 's'}${sixes ? ` (${sixes} crit${sixes > 1 ? 's' : ''})` : ''}.` : `${G.hero.name} rolls and misses.`, 'hit');
   if (!strikeLeft(G)) G.strike = null;
@@ -328,8 +384,8 @@ export function spend(G, foeId, rng, kind) {
   if (kind && !have[kind]) kind = null; // that kind ran out: fall back to auto
   kind ||= (big ? ['crit', 'hit'] : ['minion', 'hit', 'crit']).find(k => have[k]);
   G.facing = null;
-  fx(G, { t: 'face', id: 'hero', at: { x: f.x, y: f.y } });
-  fx(G, { t: 'anim', id: 'hero', a: 'act' });
+  fx(G, { t: 'face', id: G.hero.hid, at: { x: f.x, y: f.y } });
+  fx(G, { t: 'anim', id: G.hero.hid, a: 'act' });
   if (heroReach(G) > 1) fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: G.hero.cls });
   if (kind === 'crit') st.crits--; else if (kind === 'hit') st.hits--; else st.minion--;
   hitFoe(G, f, 1, rng, { crit: kind === 'crit', mult: st.mult });
@@ -343,8 +399,8 @@ const SPECS = {
   leap: { mode: 'tile', range: 4, up: 3, strike: true, text: 'Pick a square within 4 (up to 3 levels higher), then attack.' },
   quake: { mode: 'self', radius: 2, text: 'Foes within 2 take a hit and are hurled 3 squares away.' },
   bulwark: { mode: 'self', radius: 3, text: 'Ward yourself; foes within 3 are dragged to your side.' },
-  recall: { mode: 'foe', range: 10, sight: false, text: 'Solo: swap places with any foe within 10.' },
-  circle: { mode: 'self', radius: 2, text: 'Ward and heal; foes can\'t step inside the circle this round.' },
+  recall: { mode: 'foe', range: 10, sight: false, allies: true, text: 'Pick an ally (or a foe) within 10 to swap places with.' },
+  circle: { mode: 'self', radius: 2, text: 'Ward and heal you and allies within 2; foes can\'t step inside the circle this round.' },
   hammer: { mode: 'foe', range: 6, sight: true, text: 'Pick a foe within 6 in sight.' },
   grapple: { mode: 'tile', range: 8, sight: true, higher: true, strike: true, text: 'Pick a higher square within 8 in sight, then attack.' },
   vanish: { mode: 'walk', range: 4, text: 'Pick a square up to 4 moves away; you vanish there.' },
@@ -359,9 +415,9 @@ const SPECS = {
 const DESC = {
   leap: 'Leap up to 4 squares, even 3 levels up onto a ledge, with no free blows. Then attack in the same action with +2 dice.',
   quake: 'Slam the ground: every foe within 2 squares takes a hit and is hurled 3 squares away. A foe slammed into a wall, ledge or another foe takes +1 hit; minions knocked into a chasm are gone.',
-  bulwark: 'Gain a 600 ward and roar: every foe within 3 squares is dragged to your side.',
-  recall: 'Swap places with any foe within 10 squares (no free blows) and gain a 300 ward.',
-  circle: 'Gain a 300 ward and heal 10%. Foes can\'t step into the 2-square circle around you until the next round.',
+  bulwark: 'Gain a 600 ward and roar: every foe within 3 squares is dragged to your side and fights you this round.',
+  recall: 'Swap places with an ally (or a foe) within 10 squares, with no free blows. Foes turn on whoever now stands before them, and you both gain a 300 ward.',
+  circle: 'You and every ally within 2 squares gain a 300 ward and heal 10%. Foes can\'t step into the circle until the next round.',
   hammer: 'Strike a foe within 6 squares in sight: 2 hits, knocked 3 squares back (+1 hit if slammed into something), and pinned until the next round.',
   grapple: 'Haul yourself up to a higher square within 8 in sight, with no free blows. Then attack in the same action with +1 die (plus high ground).',
   vanish: 'Move up to 4 squares and become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
@@ -375,15 +431,15 @@ const DESC = {
 export const powerText = p => DESC[p.key] || p.text;
 export function powerSpec(G, p) {
   if (SPECS[p.key]) return SPECS[p.key];
-  return { mode: 'self', text: soloNotes(p) || p.text };
+  return { mode: 'self', text: soloNotes(p, G) || p.text };
 }
-// How a set power's effects play out with one hero on a grid (shown with the power's text).
-function soloNotes(p) {
-  const out = [];
+// How a set power's effects play out on the grid (shown with the power's text). A lone hero gets half of any
+// energy meant for the others.
+function soloNotes(p, G) {
+  const out = [], alone = !G || G.party.length < 2;
   for (const f of p.effects || []) {
     if (f.kind === 'smite') out.push(`Lightning strikes up to ${f.kills} minions within 6 in sight; any left over join your hits (minions only).`);
-    if (f.kind === 'energize' && f.who === 'others') out.push(`Solo: you gain ${Math.round(f.amount * 0.5)} energy instead.`);
-    if ((f.kind === 'ward' || f.kind === 'heal') && f.who === 'party') out.push('Solo: the party is you.');
+    if (f.kind === 'energize' && f.who === 'others' && alone) out.push(`With no allies, you gain ${Math.round(f.amount * 0.5)} energy instead.`);
   }
   return out.join(' ');
 }
@@ -413,6 +469,7 @@ export function powerTargets(G, p) {
     for (const n of reachable(G.map, here, S.range, (x, y) => occupied(G, x, y, 'hero')).values()) out.push({ x: n.x, y: n.y });
   } else if (S.mode === 'foe' || S.mode === 'foes') {
     for (const f of living(G)) if (dist(here, f) <= S.range && (!S.sight || lineOfSight(G.map, here, f))) out.push({ x: f.x, y: f.y, id: f.id });
+    if (S.allies) for (const h of standing(G)) if (h !== G.hero && !h.pit && dist(here, h.pos) <= S.range) out.push({ x: h.pos.x, y: h.pos.y, id: h.hid, ally: true });
   }
   return out;
 }
@@ -429,15 +486,15 @@ export function usePower(G, keyName, target, rng) {
     at = { x: target.x, y: target.y };
   } else if (S.mode === 'foe' || S.mode === 'foes') {
     const ids = [...new Set(target?.ids || [])].slice(0, S.max || 1);
-    foes = ids.map(id => G.foes.find(f => f.id === id && !f.dead)).filter(f => f && valid.some(c => c.id === f.id));
-    if (!foes.length) return err('Pick a foe in range');
+    foes = ids.map(id => G.foes.find(f => f.id === id && !f.dead) || G.party.find(h => h.hid === id && h.hp > 0)).filter(f => f && valid.some(c => c.id === (f.hid || f.id)));
+    if (!foes.length) return err('Pick a target in range');
   }
   G.hero.energy -= p.cost;
   // attack powers and move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) leave the attack open
   const strikes = p.attack || !!S.strike;
   G.turn.acted = strikes ? 'attackPower' : 'power';
   fx(G, { t: 'power', name: p.name, set: p.set || null, cls: G.hero.cls });
-  fx(G, { t: 'anim', id: 'hero', a: 'act' });
+  fx(G, { t: 'anim', id: G.hero.hid, a: 'act' });
   log(G, `${G.hero.name} uses ${p.name}.`, 'ability');
   const s = derive(G.hero);
   const effects = p.effects || [];
@@ -452,14 +509,14 @@ export function usePower(G, keyName, target, rng) {
     case 'leap': case 'grapple': case 'blink': {
       const from = { ...G.pos };
       G.pos = at;
-      fx(G, { t: 'move', id: 'hero', path: [from, at], kind: keyName === 'blink' ? 'blink' : 'leap' });
+      fx(G, { t: 'move', id: G.hero.hid, path: [from, at], kind: keyName === 'blink' ? 'blink' : 'leap' });
       break;
     }
     case 'vanish': {
       const nodes = reachable(G.map, G.pos, S.range, (x, y) => occupied(G, x, y, 'hero'));
       const path = pathTo(nodes, at.x, at.y);
       G.pos = at;
-      fx(G, { t: 'move', id: 'hero', path, kind: 'walk' });
+      fx(G, { t: 'move', id: G.hero.hid, path, kind: 'walk' });
       break;
     }
     case 'quake': {
@@ -472,18 +529,21 @@ export function usePower(G, keyName, target, rng) {
       break;
     }
     case 'bulwark': {
-      for (const f of living(G).filter(f => dist(f, G.pos) <= S.radius && dist(f, G.pos) > 1)) {
+      for (const f of living(G).filter(f => dist(f, G.pos) <= S.radius)) {
+        f.taunt = G.hero.hid; // it fights this hero in the coming enemy phase
+        if (dist(f, G.pos) <= 1) continue;
         const spot = closestFree(G, G.pos, f, 1);
         if (spot) { const from = { x: f.x, y: f.y }; f.x = spot.x; f.y = spot.y; fx(G, { t: 'move', id: f.id, path: [from, spot], kind: 'pull' }); }
       }
       break;
     }
     case 'recall': {
-      const f = foes[0], from = { ...G.pos };
-      G.pos = { x: f.x, y: f.y };
-      f.x = from.x; f.y = from.y;
-      fx(G, { t: 'move', id: 'hero', path: [{ x: f.x, y: f.y }, G.pos], kind: 'blink' });
-      fx(G, { t: 'move', id: f.id, path: [G.pos, from], kind: 'blink' });
+      const u = foes[0], ally = !!u.hid, upos = ally ? u.pos : { x: u.x, y: u.y }, from = { ...G.pos };
+      G.pos = { ...upos };
+      if (ally) { u.pos = from; withHero(G, u, () => ward(G, 300)); for (const f of living(G)) if (f.taunt === u.hid) f.taunt = G.hero.hid; else if (f.taunt === G.hero.hid) f.taunt = u.hid; }
+      else { u.x = from.x; u.y = from.y; }
+      fx(G, { t: 'move', id: G.hero.hid, path: [upos, G.pos], kind: 'blink' });
+      fx(G, { t: 'move', id: ally ? u.hid : u.id, path: [G.pos, from], kind: 'blink' });
       break;
     }
     case 'circle': G.zone = { x: G.pos.x, y: G.pos.y, r: S.radius, round: G.round }; fx(G, { t: 'burst', at: { ...G.pos }, kind: 'circle', radius: S.radius }); break;
@@ -513,7 +573,7 @@ export function usePower(G, keyName, target, rng) {
       const f = foes[0], d = dirFrom(G.pos, f);
       const behind = { x: f.x + d[0], y: f.y + d[1] };
       const spot = standable(tile(G.map, behind.x, behind.y)) && !occupied(G, behind.x, behind.y, 'hero') ? behind : closestFree(G, f, G.pos, 1);
-      if (spot) { const from = { ...G.pos }; G.pos = spot; fx(G, { t: 'move', id: 'hero', path: [from, spot], kind: 'blink' }); fx(G, { t: 'face', id: 'hero', at: { x: f.x, y: f.y } }); }
+      if (spot) { const from = { ...G.pos }; G.pos = spot; fx(G, { t: 'move', id: G.hero.hid, path: [from, spot], kind: 'blink' }); fx(G, { t: 'face', id: G.hero.hid, at: { x: f.x, y: f.y } }); }
       break;
     }
     case 'smoke': fx(G, { t: 'burst', at: { ...G.pos }, kind: 'smoke', radius: 1 }); break;
@@ -521,11 +581,17 @@ export function usePower(G, keyName, target, rng) {
   // the ledger's effect list (buffs, wards, heals, energy, minion-slaying hits, hiding)
   for (const f of effects) {
     if (f.kind === 'buff') buff(f);
-    else if (f.kind === 'ward') ward(G, f.amount);
-    else if (f.kind === 'heal') heal(G, f.pct);
-    else if (f.kind === 'energize') gainEnergy(G, f.who === 'others' ? Math.round(f.amount * 0.5) : f.amount); // solo: no allies, half to yourself
+    else if (f.kind === 'ward') eachHero(G, f.who === 'party' ? 'party' : 'self', () => ward(G, f.amount));
+    else if (f.kind === 'heal') eachHero(G, f.who === 'party' ? 'party' : 'self', () => heal(G, f.pct));
+    else if (f.kind === 'energize') {
+      if (f.who === 'others' && G.party.length < 2) gainEnergy(G, Math.round(f.amount * 0.5)); // no allies: half to yourself
+      else eachHero(G, f.who === 'others' ? 'others' : 'party', () => gainEnergy(G, f.amount));
+    }
     else if (f.kind === 'smite') smite(G, f.kills, rng);
-    else if (f.kind === 'allyWard') { ward(G, f.amount); heal(G, f.heal || 0); }
+    else if (f.kind === 'allyWard') { // you and every ally inside the circle
+      const me = G.hero;
+      for (const h of standing(G).filter(h => h === me || dist(h.pos, me.pos) <= (S.radius || 2))) withHero(G, h, () => { ward(G, f.amount); heal(G, f.heal || 0); });
+    }
     else if (f.kind === 'swap') ward(G, f.ward || 0);
     else if (f.kind === 'hide') { G.hidden = { until: G.round + 1 }; fx(G, { t: 'hide' }); log(G, `${G.hero.name} is hidden.`, 'ability'); }
   }
@@ -594,12 +660,12 @@ function push(G, f, [dx, dy], n, rng) {
 
 // ------------------------------------------------------------------ wares (one per turn, free)
 export function useWare(G, wareId, rng) {
-  const ch = G.hero, i = (ch.consumables || []).findIndex(w => w.id === wareId);
+  const ch = G.hero, i = (G.wares || []).findIndex(w => w.id === wareId);
   if (i < 0) return err('No such ware');
-  if (G.turn.ware) return err('One ware per turn');
+  if (G.turn.ware) return err('One ware per hero per turn');
   if (G.stage !== 'scene' || ch.hp <= 0) return err('Not now');
-  const C = CONSUMABLES[ch.consumables[i].key], e = C.effect;
-  ch.consumables.splice(i, 1);
+  const C = CONSUMABLES[G.wares[i].key], e = C.effect;
+  G.wares.splice(i, 1);
   G.turn.ware = true;
   if (e.kind === 'heal') heal(G, e.pct);
   else if (e.kind === 'energy') gainEnergy(G, e.amount);
@@ -624,9 +690,9 @@ export function climb(G, rng) {
     const spot = edgeNear(G, G.pos);
     const from = { ...G.pos };
     G.pos = spot; G.pit = null;
-    fx(G, { t: 'move', id: 'hero', path: [from, spot], kind: 'leap' });
+    fx(G, { t: 'move', id: G.hero.hid, path: [from, spot], kind: 'leap' });
     log(G, `${G.hero.name} climbs out of the chasm.`, 'ability');
-  } else { G.pit.tries++; log(G, 'You slip back down. (+1 to the next try)', 'hurt'); }
+  } else { G.pit.tries++; log(G, `${G.hero.name} slips back down. (+1 to the next try)`, 'hurt'); }
   return ok();
 }
 function edgeNear(G, p) { return freeNear(G, p) || G.map.start; }
@@ -634,7 +700,7 @@ function fall(G) {
   const m = derive(G.hero).maxHp;
   G.pit = { tries: 0 };
   G.strike = null;
-  fx(G, { t: 'fall', id: 'hero' });
+  fx(G, { t: 'fall', id: G.hero.hid });
   log(G, `🕳 ${G.hero.name} falls into the chasm!`, 'hurt');
   hurtHero(G, Math.round(m * 0.10), { ignoreArmor: true, label: 'Fall' });
 }
@@ -653,16 +719,16 @@ export function openChest(G, x, y, rng) {
 export const exitOpen = G => G.cleared && G.stage === 'scene';
 export function takeExit(G) {
   if (!exitOpen(G)) return err('Clear the scene first');
-  if (dist(G.pos, G.map.exit) > 1) return err('Walk to the stair first');
+  if (dist(G.pos, G.map.exit) > 1) return err('Walk to the stair first'); // one hero reaching it leads the party down
   G.stats.scenes++;
   const last = G.scene === G.adv.acts[G.act].scenes.length - 1;
   if (isLastScene(G)) { G.stage = 'victory'; return ok({ victory: true }); }
-  if (last) { G.act++; G.scene = 0; G.stage = 'camp'; heal(G, 100); G.camp = { open: true }; }
+  if (last) { G.act++; G.scene = 0; G.stage = 'camp'; for (const h of G.party) { h.downed = false; h.hp = derive(h).maxHp; } G.camp = { open: true }; }
   else { G.scene++; G.stage = 'next'; }
   return ok();
 }
 export function leaveCamp(G) {
-  G.anchor = anchorFor(G); // the new act is sized against the hero as they leave camp
+  G.anchor = anchorFor(G); // the new act is sized against the party as it leaves camp
   G.stage = 'next';
   G.camp = null;
 }
@@ -679,15 +745,14 @@ function rollRarity(G, rng, floor) {
 }
 export function lootItem(G, rng, floor) {
   const r = rollRarity(G, rng, floor);
-  const prefer = CLASS_SETS[G.hero.cls] || [];
+  const prefer = [...new Set(G.party.flatMap(h => CLASS_SETS[h.cls] || []))];
   const setKey = r === 'set' && rng() < 0.65 ? prefer[Math.floor(rng() * prefer.length)] : undefined;
   return makeItem(r, rng, undefined, lootLevel(G), setKey);
 }
 function dropLoot(G, rng, n, floor, from) {
   const items = [];
   for (let i = 0; i < n; i++) items.push(lootItem(G, rng, i === 0 ? floor : null));
-  G.hero.bag = G.hero.bag || [];
-  G.hero.bag.push(...items);
+  G.bag.push(...items);
   fx(G, { t: 'loot', from, items });
   log(G, `${from}: ${items.map(i => i.name).join(', ')}.`, 'loot');
 }
@@ -699,30 +764,30 @@ export function unlockKeys(ch) {
   for (const sy of activeSynergies(ch, counts)) keys.push(`syn:${sy.key}`);
   return keys;
 }
-export function equip(G, itemId) {
-  const ch = G.hero, i = (ch.bag || []).findIndex(it => it.id === itemId);
-  if (i < 0) return err('Not in your satchel');
-  if (G.stage === 'scene' && G.turn.acted && !G.cleared && living(G).length) { /* gear changes are free, like the table */ }
-  const it = ch.bag.splice(i, 1)[0];
+// Gear changes are free, like the table. who: party index (default: the active hero). The satchel is shared.
+const heroOf = (G, who) => G.party[who ?? G.active];
+export function equip(G, itemId, who) {
+  const ch = heroOf(G, who), i = G.bag.findIndex(it => it.id === itemId);
+  if (i < 0 || !ch) return err('Not in the satchel');
+  const it = G.bag.splice(i, 1)[0];
   const old = ch.gear[it.slot];
   ch.gear[it.slot] = it;
-  if (old) ch.bag.push(old);
-  clamp(G);
-  announceUnlocks(G);
+  if (old) G.bag.push(old);
+  withHero(G, ch, () => { clamp(G); announceUnlocks(G); });
   return ok();
 }
-export function unequip(G, slot) {
-  const ch = G.hero, it = ch.gear[slot];
+export function unequip(G, slot, who) {
+  const ch = heroOf(G, who), it = ch?.gear[slot];
   if (!it) return err('Nothing there');
   delete ch.gear[slot];
-  ch.bag.push(it);
-  clamp(G);
+  G.bag.push(it);
+  withHero(G, ch, () => clamp(G));
   return ok();
 }
 export function discard(G, itemId) {
-  const ch = G.hero, i = (ch.bag || []).findIndex(it => it.id === itemId);
-  if (i < 0) return err('Not in your satchel');
-  ch.bag.splice(i, 1);
+  const i = G.bag.findIndex(it => it.id === itemId);
+  if (i < 0) return err('Not in the satchel');
+  G.bag.splice(i, 1);
   return ok();
 }
 function clamp(G) {
@@ -738,39 +803,39 @@ function announceUnlocks(G) {
     const [kind, id, n] = k.split(':');
     if (kind === 'syn') {
       const sy = SYNERGIES.find(x => x.key === id);
-      fx(G, { t: 'unlock', kind: 'synergy', title: `Hidden synergy: ${sy.name}`, text: synergyText(sy) });
+      fx(G, { t: 'unlock', kind: 'synergy', title: `${ch.name}: hidden synergy ${sy.name}`, text: synergyText(sy) });
       log(G, `✦ Hidden synergy discovered: ${sy.name}.`, 'loot');
     } else {
       const S = SETS[id], bonus = S.bonuses.find(b => b.n === Number(n));
       const pw = powersFor(ch).find(p => p.key === S.power.key);
       const text = Number(n) === 1 ? `New power: ${S.power.name}. ${pw?.text || ''}` : `${S.power.name} grows stronger (${n} pieces).${bonus ? ' ' + statsText(bonus.stats) + '.' : ''}`;
-      fx(G, { t: 'unlock', kind: 'set', set: id, title: Number(n) === 1 ? S.power.name : `${S.name} ×${n}`, text });
+      fx(G, { t: 'unlock', kind: 'set', set: id, title: `${ch.name}: ${Number(n) === 1 ? S.power.name : `${S.name} ×${n}`}`, text });
     }
   }
   ch.unlocked = [...known];
 }
-export function compareItem(G, it) {
-  const old = G.hero.gear[it.slot];
+export function compareItem(G, it, who) {
+  const old = heroOf(G, who).gear[it.slot];
   const keys = new Set([...Object.keys(it.stats), ...Object.keys(old?.stats || {})]);
   return [...keys].map(k => ({ k, now: old?.stats[k] || 0, then: it.stats[k] || 0 }));
 }
 
 // ------------------------------------------------------------------ the Rakshasa (camp between acts)
 export function sell(G, itemId) {
-  const ch = G.hero, i = (ch.bag || []).findIndex(it => it.id === itemId);
-  if (i < 0) return err('Not in your satchel');
-  const it = ch.bag.splice(i, 1)[0];
+  const i = G.bag.findIndex(it => it.id === itemId);
+  if (i < 0) return err('Not in the satchel');
+  const it = G.bag.splice(i, 1)[0];
   const v = SELL_VALUE[it.rarity] || 1;
-  ch.favour = (ch.favour || 0) + v;
+  G.favour = (G.favour || 0) + v;
   return ok({ favour: v, rarity: it.rarity });
 }
-export function buyBoon(G, k) {
-  const ch = G.hero, B = BOONS[k];
-  if (!B) return err('No such boon');
+export function buyBoon(G, k, who) {
+  const ch = heroOf(G, who), B = BOONS[k];
+  if (!B || !ch) return err('No such boon');
   if (boonLocked(ch, k)) return err('Only once');
   const price = boonPrice(ch, k);
-  if ((ch.favour || 0) < price) return err('Not enough Favour');
-  ch.favour -= price;
+  if ((G.favour || 0) < price) return err('Not enough Favour');
+  G.favour -= price;
   ch.boons = ch.boons || {};
   for (const [s, v] of Object.entries(B.stats)) ch.boons[s] = (ch.boons[s] || 0) + v;
   ch.boonBuys = { ...(ch.boonBuys || {}), [k]: ((ch.boonBuys || {})[k] || 0) + 1 };
@@ -778,32 +843,47 @@ export function buyBoon(G, k) {
   return ok();
 }
 export function buyWare(G, k) {
-  const ch = G.hero, C = CONSUMABLES[k];
+  const C = CONSUMABLES[k];
   if (!C) return err('No such ware');
-  if ((ch.favour || 0) < C.cost) return err('Not enough Favour');
-  ch.favour -= C.cost;
-  ch.consumables = ch.consumables || [];
-  ch.consumables.push({ id: 'w' + Date.now().toString(36) + Math.floor(Math.random() * 1e4), key: k });
+  if ((G.favour || 0) < C.cost) return err('Not enough Favour');
+  G.favour -= C.cost;
+  G.wares.push({ id: 'w' + Date.now().toString(36) + Math.floor(Math.random() * 1e4), key: k });
   return ok();
 }
 
 // ------------------------------------------------------------------ the enemy phase and End round
+// End the round: every hero's turn ends, the foes act, then a new round begins.
 export function endTurn(G, rng) {
   if (G.stage !== 'scene') return err('Not now');
-  G.strike = null;
+  for (const h of G.party) h.strike = null;
   fx(G, { t: 'phase', name: 'Enemy phase' });
   enemyPhase(G, rng);
   if (G.stage !== 'scene') return ok();
   endRound(G, rng);
   return ok();
 }
+// Heroes a foe can go after: standing, not hidden, not down in a chasm.
+const targetable = G => standing(G).filter(h => !h.pit && !h.hidden);
+// Its target: whoever taunted it, else the hero it can reach soonest (nearest; ties go to the weaker).
+function pickTarget(G, f) {
+  const list = targetable(G);
+  const t = f.taunt && list.find(h => h.hid === f.taunt);
+  if (t) return t;
+  return list.sort((a, b) => dist(a.pos, f) - dist(b.pos, f) || a.hp - b.hp)[0] || null;
+}
 function enemyPhase(G, rng) {
-  const order = living(G).sort((a, b) => dist(a, G.pos) - dist(b, G.pos));
+  const order = living(G).sort((a, b) => Math.min(...standing(G).map(h => dist(a, h.pos))) - Math.min(...standing(G).map(h => dist(b, h.pos))));
   for (const f of order) {
     if (f.dead || G.stage !== 'scene') continue;
-    if (G.pit || G.hidden) { if (!f.pinned) wander(G, f, rng); continue; }
-    if (!inReach(G, f, G.pos, f.reach, f.fly) && !f.pinned) approach(G, f);
-    if (inReach(G, f, G.pos, f.reach, f.fly)) foeAttack(G, f, rng);
+    const target = pickTarget(G, f);
+    if (!target) { if (!f.pinned) wander(G, f, rng); continue; }
+    withHero(G, target, () => {
+      if (!inReach(G, f, G.pos, f.reach, f.fly) && !f.pinned) approach(G, f);
+    });
+    // after moving, it strikes its target, or whoever it can reach; Sweeping Blows strike every hero in reach
+    const inR = targetable(G).filter(h => inReach(G, f, h.pos, f.reach, f.fly));
+    const victims = foeHas(f, 'sweep') ? inR : inR.includes(target) ? [target] : inR.slice(0, 1);
+    for (const h of victims) if (G.stage === 'scene' && !f.dead) withHero(G, h, () => foeAttack(G, f, rng, victims.length));
   }
 }
 const inZone = (G, x, y) => G.zone && G.zone.round === G.round && dist({ x, y }, G.zone) <= G.zone.r;
@@ -842,47 +922,47 @@ function wander(G, f, rng) {
 }
 // One die per attack; every die at or under the hero's landOn (3, or 2 in heavy armour) is a blow.
 // +1 die when the hero is surrounded (3+ foes beside them) or the attacker stands higher.
-export function foeAttackDice(G, f) {
+export function foeAttackDice(G, f, swept = 1) {
   const s = derive(G.hero);
   const surrounded = living(G).filter(o => adjacent(o, G.pos)).length >= 3 ? 1 : 0;
   const higher = tile(G.map, f.x, f.y).e > heroTile(G).e ? 1 : 0;
-  const sweep = foeHas(f, 'sweep') ? 1 : 0; // solo: Sweeping Blows has one hero to sweep, so it swings once more
+  const sweep = foeHas(f, 'sweep') && swept < 2 ? 1 : 0; // Sweeping Blows with only one hero to sweep swings once more
   return { n: f.attacks + surrounded + higher + sweep, landOn: landOn(s), surrounded, higher };
 }
-function foeAttack(G, f, rng) {
-  const D = foeAttackDice(G, f);
+function foeAttack(G, f, rng, swept = 1) {
+  const D = foeAttackDice(G, f, swept);
   const dice = Array.from({ length: D.n }, () => d6(rng));
   const landed = dice.filter(d => d <= D.landOn).length;
   fx(G, { t: 'face', id: f.id, at: { ...G.pos } });
   fx(G, { t: 'anim', id: f.id, a: 'attack', face: G.pos });
   if (f.reach > 1) fx(G, { t: 'bolt', from: { x: f.x, y: f.y }, to: { ...G.pos }, cls: 'arrow' });
-  fx(G, { t: 'dice', who: f.name, label: `${f.name} attacks${D.surrounded ? ' (surrounded)' : ''}${D.higher ? ' (from above)' : ''}`, dice, landOn: D.landOn, defense: true });
+  fx(G, { t: 'dice', who: f.name, label: `${f.name} attacks ${G.hero.name}${D.surrounded ? ' (surrounded)' : ''}${D.higher ? ' (from above)' : ''}`, dice, landOn: D.landOn, defense: true });
   for (let i = 0; i < landed && G.stage === 'scene'; i++) hurtHero(G, f.damage, { from: f, label: landed > 1 ? `Blow ${i + 1} of ${landed}` : 'Blow' }); // one blow at a time
-  if (!landed) fx(G, { t: 'text', id: 'hero', text: 'Blocked', color: '#cfd8e3' });
+  if (!landed) fx(G, { t: 'text', id: G.hero.hid, text: 'Blocked', color: '#cfd8e3' });
   if (G.stage !== 'scene') return;
   if (foeHas(f, 'leech')) {
     const lost = -gainEnergy(G, -10);
-    if (lost) announce(G, f, 'leech', `You lose ${lost} energy.`);
+    if (lost) announce(G, f, 'leech', `${G.hero.name} loses ${lost} energy.`);
   }
   if (foeHas(f, 'slam') && landed) hurl(G, f, rng);
 }
 // Slam: the hero is hurled 3 squares straight away from the foe.
 function hurl(G, f, rng) {
-  announce(G, f, 'slam', 'You are hurled 3 squares!');
+  announce(G, f, 'slam', `${G.hero.name} is hurled 3 squares!`);
   const [dx, dy] = dirFrom(f, G.pos), from = { ...G.pos };
   let slammed = false;
   for (let i = 0; i < 3; i++) {
     const nx = G.pos.x + dx, ny = G.pos.y + dy, t = tile(G.map, nx, ny), cur = heroTile(G);
     if (t && t.kind === 'chasm') {
       G.pos = { x: nx, y: ny };
-      fx(G, { t: 'move', id: 'hero', path: [from, G.pos], kind: 'push' });
+      fx(G, { t: 'move', id: G.hero.hid, path: [from, G.pos], kind: 'push' });
       fall(G);
       return;
     }
     if (!standable(t) || occupied(G, nx, ny, 'hero') || t.e - cur.e > 0) { slammed = true; break; }
     G.pos = { x: nx, y: ny };
   }
-  if (G.pos.x !== from.x || G.pos.y !== from.y) fx(G, { t: 'move', id: 'hero', path: [from, { ...G.pos }], kind: 'push' });
+  if (G.pos.x !== from.x || G.pos.y !== from.y) fx(G, { t: 'move', id: G.hero.hid, path: [from, { ...G.pos }], kind: 'push' });
   if (slammed) hurtHero(G, f.damage, { from: f, label: 'Slammed' });
 }
 function endRound(G, rng) {
@@ -898,23 +978,26 @@ function endRound(G, rng) {
       for (let i = 0; i < 2; i++) { const at = freeNear(G, f); if (at) spawnFoe(G, minionSpawn(G), at, rng); }
     }
   }
-  if (G.hidden && G.hidden.until <= G.round) { G.hidden = null; fx(G, { t: 'text', id: 'hero', text: 'Revealed', color: '#b88cff' }); }
+  for (const f of living(G)) f.taunt = null;
+  for (const h of G.party) if (h.hidden && h.hidden.until <= G.round) { h.hidden = null; fx(G, { t: 'text', id: h.hid, text: 'Revealed', color: '#b88cff' }); }
   G.zone = null;
   G.round++;
   G.stats.rounds++;
   arriveWaves(G, rng);
-  const e = gainEnergy(G, derive(G.hero).energyPerRound);
-  freshTurn(G);
-  fx(G, { t: 'phase', name: `Round ${G.round}`, energy: e });
+  let e = 0;
+  for (const h of standing(G)) { e = withHero(G, h, () => gainEnergy(G, derive(h).energyPerRound)); h.turn = freshTurnFor(h); }
+  for (const h of G.party) if (h.hp <= 0) h.turn = { move: 0, acted: 'down', ware: true };
+  // start the round with the first hero still standing
+  G.active = Math.max(0, G.party.findIndex(h => h.hp > 0));
+  fx(G, { t: 'phase', name: `Round ${G.round}`, energy: G.party.length > 1 ? 0 : e });
   checkCleared(G);
 }
 
 // ------------------------------------------------------------------ retry
 export function retryScene(G, rng) {
   const cp = JSON.parse(G.checkpoint);
-  Object.assign(G, { hero: cp.hero, act: cp.act, scene: cp.scene, anchor: cp.anchor, stats: cp.stats });
-  G.hero.hp = derive(G.hero).maxHp;
-  G.hero.energy = Math.max(G.hero.energy, 30);
+  Object.assign(G, { party: cp.party, bag: cp.bag, favour: cp.favour, wares: cp.wares, act: cp.act, scene: cp.scene, anchor: cp.anchor, stats: cp.stats });
+  for (const h of G.party) { h.downed = false; h.hp = derive(h).maxHp; h.energy = Math.max(h.energy, 30); }
   G.log = [];
   return startScene(G, rng);
 }

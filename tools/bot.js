@@ -2,16 +2,18 @@
 import * as R from '../src/game/rules.js';
 import { dist } from '../src/game/grid.js';
 
-// A simple bot: equip upgrades, use a power when it can, walk into reach, attack, spend on the weakest foe.
+// A simple bot: each hero in turn equips upgrades, uses a power when it can, walks into reach, attacks and
+// spends on the weakest foe; then the round ends.
 export function botTurn(G, rng) {
-  if (G.pit) { R.climb(G, rng); return R.endTurn(G, rng); }
-  for (const it of [...(G.hero.bag || [])]) {
-    const old = G.hero.gear[it.slot];
-    const score = x => (x ? Object.entries(x.stats).reduce((t, [k, v]) => t + v * ({ damage: 2, maxHp: 1, armor: 30, dice: 400, critMult: 200, cleave: 150 }[k] || 5), 0) + (x.set ? 300 : 0) : -1);
-    if (score(it) > score(old)) R.equip(G, it.id);
-  }
+  G.party.forEach((h, i) => { if (h.hp > 0 && G.stage === 'scene' && !G.cleared) { R.selectHero(G, i); heroTurn(G, rng); } });
+  if (G.stage === 'scene' && !G.cleared) R.endTurn(G, rng);
+}
+const score = x => (x ? Object.entries(x.stats).reduce((t, [k, v]) => t + v * ({ damage: 2, maxHp: 1, armor: 30, dice: 400, critMult: 200, cleave: 150 }[k] || 5), 0) + (x.set ? 300 : 0) : -1);
+function heroTurn(G, rng) {
+  if (G.pit) { R.climb(G, rng); return; }
+  for (const it of [...G.bag]) if (score(it) > score(G.hero.gear[it.slot])) R.equip(G, it.id);
   const s = R.heroStats(G);
-  if (G.hero.hp < s.maxHp * 0.4) { const w = G.hero.consumables?.find(c => c.key === 'draught'); if (w) R.useWare(G, w.id, rng); }
+  if (G.hero.hp < s.maxHp * 0.4) { const w = G.wares.find(c => c.key === 'draught'); if (w) R.useWare(G, w.id, rng); }
   const near = () => R.living(G).sort((a, b) => dist(a, G.pos) - dist(b, G.pos))[0];
   // walk toward the nearest foe until it is in reach
   if (!R.foesInReach(G).length && near()) {
@@ -56,13 +58,12 @@ export function botTurn(G, rng) {
       if (best) R.moveHero(G, best.x, best.y, rng);
     }
   }
-  if (G.stage === 'scene') R.endTurn(G, rng);
 }
 export function playScene(G, rng, maxRounds = 40) {
   for (let r = 0; r < maxRounds && G.stage === 'scene' && !G.cleared; r++) { botTurn(G, rng); G.fx.length = 0; }
   if (G.stage !== 'scene' || !G.cleared) return G.stage === 'dead' ? 'dead' : 'stuck';
   for (const c of G.map.chests) {
-    const spots = [...R.heroMoves({ ...G, turn: { move: 99 } }).values()].filter(n => dist(n, c) === 1);
+    const spots = [...R.heroMoves(G).values()].filter(n => dist(n, c) === 1);
     if (spots.length) { G.pos = { x: spots[0].x, y: spots[0].y }; R.openChest(G, c.x, c.y, rng); }
   }
   G.pos = { ...G.map.exit };

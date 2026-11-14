@@ -10,7 +10,7 @@ import { SLOT_LABEL, RARITIES, ENEMY_TYPES } from './ledger/engine.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const SAVE = 'delvers-descent-v1';
+const SAVE = 'delvers-descent-v2'; // v2: parties
 const RC = { common: 'var(--common)', magic: 'var(--magic)', rare: 'var(--rare)', legendary: 'var(--legendary)' };
 const rarityColor = it => (it.set ? R.SETS[it.set].color : RC[it.rarity] || 'var(--common)');
 
@@ -51,7 +51,7 @@ function save() {
   } catch { /* private mode: no saves */ }
 }
 function loadSave() {
-  try { const s = JSON.parse(localStorage.getItem(SAVE) || 'null'); return s?.G?.hero ? s : null; } catch { return null; }
+  try { const s = JSON.parse(localStorage.getItem(SAVE) || 'null'); return s?.G?.party?.length ? s : null; } catch { return null; }
 }
 function clearSave() { try { localStorage.removeItem(SAVE); } catch { /* ignore */ } }
 
@@ -90,43 +90,57 @@ function heroPortrait(cls, w = 96, h = 120) {
   g.drawImage(img, 0, row * M.fh, M.fw, M.fh, w - M.ax * sc, h * 1.72 - M.ay * sc, M.fw * sc, M.fh * sc);
   return c;
 }
+let picks = ['ironclad', 'ranger', 'runepriest'];
+const partyLabel = list => list.map(c => `${R.DEFAULT_NAMES[c]} the ${R.CLASSES[c].name}`).join(', ');
 function titleScreen() {
   $('#hud').hidden = true;
   const saved = loadSave();
-  let sel = 'ironclad';
   const cards = Object.entries(R.CLASSES).map(([k, C]) => `
-    <div class="cls ${k === sel ? 'sel' : ''}" data-cls="${k}">
+    <div class="cls" data-cls="${k}">
+      <div class="badge"></div>
       <div class="pc" data-cls="${k}"></div>
       <h3 style="color:${HERO_COLOR[k]}">${C.glyph} ${esc(C.name)}</h3>
       <div class="role">${esc(C.role)}</div>
       <div class="stats"><span>❤ ${fmt(C.base.maxHp)}</span><span>⛨ ${C.base.armor}%</span><span>⚄ ${C.base.dice} dice</span><span>⚔ ${fmt(C.base.damage)}</span><span>➜ move ${C.base.move}</span><span>◎ ${C.base.reach ? 'reach ' + C.base.reach : 'melee'}</span></div>
       <ul>${C.abilities.map(a => `<li title="${esc(a.text)}"><b>${esc(a.name)}</b> <span class="dim">${a.cost}</span></li>`).join('')}</ul>
     </div>`).join('');
+  const savedParty = saved ? saved.G.party.map(h => h.name).join(', ') : '';
   const p = modal(`<div class="title-screen">
     <h1 class="logo">Delvers' Descent</h1>
-    <div class="tag">A solo descent to the Eighth Gate · turn-based tactics on the Delvers' Ledger rules</div>
+    <div class="tag">Lead a party down to the Eighth Gate · turn-based tactics on the Delvers' Ledger rules</div>
+    <p class="pick-help">Tap callings to add them to your party (1 to ${R.SOLO.maxParty}); tap again to remove. You control every hero.</p>
     <div class="classes">${cards}</div>
-    <div class="name-row"><input id="hName" maxlength="20" placeholder="Name your hero"><button class="primary" id="go">Begin the descent</button></div>
-    <div class="btnrow" style="justify-content:center">${saved ? `<button id="cont">Continue: ${esc(saved.G.hero.name)}, ${esc(R.CLASSES[saved.G.hero.cls].name)} (${esc(saved.G.adv.acts[saved.G.act]?.name || '')})</button>` : ''}<button id="howto">How to play</button></div>
+    <div class="name-row"><span id="partyNames"></span><button class="primary" id="go">Begin the descent</button></div>
+    <div class="btnrow" style="justify-content:center">${saved ? `<button id="cont">Continue: ${esc(savedParty)} (${esc(saved.G.adv.acts[saved.G.act]?.name || '')})</button>` : ''}<button id="howto">How to play</button></div>
     <div class="credits">Art: Kenney (CC0), Flare monster renders by johndh, Wciow and ryan.dansie on OpenGameArt (CC0 / CC-BY-SA 3.0). Rules: Delvers' Ledger. See CREDITS.md.</div>
   </div>`);
+  const show = () => {
+    p.querySelectorAll('.cls').forEach(el => {
+      const i = picks.indexOf(el.dataset.cls);
+      el.classList.toggle('sel', i >= 0);
+      el.querySelector('.badge').textContent = i >= 0 ? i + 1 : '';
+    });
+    p.querySelector('#partyNames').textContent = picks.length ? `Party: ${partyLabel(picks)}` : 'Pick at least one calling';
+    p.querySelector('#go').disabled = !picks.length;
+  };
   p.querySelectorAll('.pc').forEach(el => el.appendChild(heroPortrait(el.dataset.cls)));
   p.querySelectorAll('.cls').forEach(el => el.onclick = () => {
-    sel = el.dataset.cls;
-    p.querySelectorAll('.cls').forEach(x => x.classList.toggle('sel', x === el));
+    const c = el.dataset.cls;
+    picks = picks.includes(c) ? picks.filter(x => x !== c) : [...picks, c].slice(-R.SOLO.maxParty);
+    show();
   });
+  show();
   p.querySelector('#go').onclick = () => {
-    const name = p.querySelector('#hName').value.trim() || R.CLASSES[sel].name;
+    if (!picks.length) return;
     clearSave();
     rng = rngFrom((Math.random() * 2 ** 32) >>> 0);
-    G = R.newRun(name, sel, rng);
+    G = R.newRun(picks.map(cls => ({ cls })), rng);
     $('#modal').hidden = true;
     beginScene();
   };
-  p.querySelector('#hName').onkeydown = e => { if (e.key === 'Enter') p.querySelector('#go').click(); };
   p.querySelector('#howto').onclick = () => help(() => titleScreen());
   if (saved) p.querySelector('#cont').onclick = () => {
-    G = { ...saved.G, fx: [] };
+    G = R.bindParty({ ...saved.G, fx: [] });
     rng = rngFrom(saved.rs);
     $('#modal').hidden = true;
     resume();
@@ -174,14 +188,17 @@ async function afterStage() {
 }
 function died() {
   refresh();
-  const p = modal(`<h2>You have fallen</h2><div class="narr">${esc(G.hero.name)} lies still on the cold stones of ${esc(R.sceneDef(G)?.name || 'the deep')}. But the Ledger does not close an account so easily…</div>
+  const who = G.party.length > 1 ? `${G.party.map(h => h.name).join(', ')} lie still` : `${G.hero.name} lies still`;
+  const p = modal(`<h2>${G.party.length > 1 ? 'The party has fallen' : 'You have fallen'}</h2><div class="narr">${esc(who)} on the cold stones of ${esc(R.sceneDef(G)?.name || 'the deep')}. But the Ledger does not close an account so easily…</div>
     <div class="btnrow"><button id="newrun">New run</button><button class="primary" id="retry">Rise again (retry the scene)</button></div>`, { narrow: true });
   p.querySelector('#retry').onclick = () => { $('#modal').hidden = true; R.retryScene(G, rng); G.fx = G.fx.filter(e => e.t !== 'spawn' && e.t !== 'log'); save(); enterScene(); };
   p.querySelector('#newrun').onclick = () => { clearSave(); titleScreen(); };
 }
 function victory() {
-  const t = G.hero.tally || {};
-  const p = modal(`<h2>The Eighth Gate is shut</h2><div class="narr">${esc(G.hero.name)} the ${esc(R.CLASSES[G.hero.cls].name)} walked into the dark alone and came back out.</div>
+  const t = {};
+  for (const h of G.party) for (const [k, v] of Object.entries(h.tally || {})) t[k] = (t[k] || 0) + v;
+  const names = G.party.map(h => `${h.name} the ${R.CLASSES[h.cls].name}`).join(', ');
+  const p = modal(`<h2>The Eighth Gate is shut</h2><div class="narr">${esc(names)} walked into the dark${G.party.length > 1 ? ' together' : ' alone'} and came back out.</div>
     <div class="statgrid" style="max-width:320px"><span>Scenes cleared</span><span>${G.stats.scenes}</span><span>Rounds fought</span><span>${G.stats.rounds}</span><span>Minions slain</span><span>${t.minion || 0}</span><span>Elites slain</span><span>${t.elite || 0}</span><span>Bosses slain</span><span>${t.boss || 0}</span></div>
     <div class="btnrow"><button class="primary" id="again">Another descent</button></div>`, { narrow: true });
   clearSave();
@@ -194,7 +211,7 @@ async function act(fn, { quiet = false } = {}) {
   if (sel) clearSel();
   if (mode.kind === 'ware') mode = { kind: 'idle' };
   busy = true;
-  shown = view.shown = { hp: G.hero.hp, ward: G.hero.ward || 0 }; // the HUD follows the effects, not the final state
+  shown = view.shown = Object.fromEntries(G.party.map(h => [h.hid, { hp: h.hp, ward: h.ward || 0 }])); // the HUD follows the effects, not the final state
   const r = fn();
   if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; shown = view.shown = null; refresh(); return r; }
   refresh();
@@ -211,10 +228,12 @@ async function act(fn, { quiet = false } = {}) {
 async function playFx() {
   while (G.fx.length) {
     const e = G.fx.shift();
-    if (shown && e.id === 'hero') {
-      if (e.t === 'dmg') { shown.hp = Math.max(0, shown.hp - e.n); shown.ward = Math.max(0, shown.ward - (e.warded || 0)); }
-      if (e.t === 'heal') shown.hp += e.n;
-      if (e.t === 'ward') shown.ward += e.n;
+    const sh = shown && shown[e.id];
+    if (sh) {
+      if (e.t === 'dmg') { sh.hp = Math.max(0, sh.hp - e.n); sh.ward = Math.max(0, sh.ward - (e.warded || 0)); }
+      if (e.t === 'heal') sh.hp += e.n;
+      if (e.t === 'ward') sh.ward += e.n;
+      if (e.t === 'revive') { const h = G.party.find(q => q.hid === e.id); sh.hp = h.hp; }
     }
     switch (e.t) {
       case 'log': addLog(e.text, e.kind); break;
@@ -287,7 +306,9 @@ async function showDice(e) {
 
 function refresh(light = false) {
   if (!G || !G.map) return;
-  const s = R.heroStats(G), h = shown ? { ...G.hero, hp: Math.min(shown.hp, R.heroStats(G).maxHp), ward: shown.ward } : G.hero;
+  const sh = shown?.[G.hero.hid];
+  const s = R.heroStats(G), h = sh ? { ...G.hero, hp: Math.min(sh.hp, R.heroStats(G).maxHp), ward: sh.ward } : G.hero;
+  partyStrip();
   // orbs
   $('#orbHp').style.setProperty('--pct', `${(h.hp / s.maxHp) * 100}%`);
   $('#orbEn').style.setProperty('--pct', `${(h.energy / s.maxEnergy) * 100}%`);
@@ -329,7 +350,11 @@ function refresh(light = false) {
     btn(`⚔ ${G.turn.acted === 'attackPower' ? 'Strike' : 'Attack'} <small>${R.attackPool(G).total}d6</small>`, inReach ? 'Roll your dice pool; every 4+ is a hit you can spend on foes in reach (A). Or just click a foe in reach.' : 'No foe in reach', R.canAttack(G) && inReach && !R.strikeLeft(G), () => act(() => R.attack(G, rng)));
     btn('» Sprint', `Your action: +${s.move} move (S)`, R.canAct(G), () => act(() => R.sprint(G)));
   }
-  if (!G.cleared) btn('End turn ⏎', 'Foes act, then a new round (E)', G.stage === 'scene', () => endTurn(), 'end');
+  if (!G.cleared && G.party.length > 1) {
+    const nxt = nextHero();
+    btn('Next ▸', nxt >= 0 ? `Switch to ${G.party[nxt].name} (Tab)` : 'Every hero has acted', nxt >= 0, () => switchHero(nxt), R.heroDone(G, G.hero) && nxt >= 0 ? 'primary' : '');
+  }
+  if (!G.cleared) btn(G.party.length > 1 ? 'End round ⏎' : 'End turn ⏎', G.party.length > 1 ? 'Every hero is done: the foes act, then a new round (E)' : 'Foes act, then a new round (E)', G.stage === 'scene', () => endTurn(), nextHero() < 0 || G.party.length < 2 ? 'end' : '');
   document.documentElement.style.setProperty('--dock', $('#bar').offsetHeight + 'px');
   // powers
   const pw = $('#powers');
@@ -349,13 +374,15 @@ function refresh(light = false) {
   // wares
   const wa = $('#wares');
   wa.innerHTML = '';
-  for (const w of h.consumables || []) {
-    const C = R.CONSUMABLES[w.key]; if (!C) continue;
+  const byKey = new Map();
+  for (const w of G.wares || []) if (R.CONSUMABLES[w.key]) (byKey.get(w.key) || byKey.set(w.key, []).get(w.key)).push(w);
+  for (const [k, list] of byKey) {
+    const w = list[0], C = R.CONSUMABLES[k];
     const b = document.createElement('button');
-    b.innerHTML = `${consumableSVG(w.key, 22)}${esc(C.name)}`;
-    b.title = `${C.name}: ${C.text} (free, one ware per turn)`;
+    b.innerHTML = `${consumableSVG(w.key, 22)}${esc(C.name)}${list.length > 1 ? ` <b>×${list.length}</b>` : ''}`;
+    b.title = `${C.name}: ${C.text} (free; one ware per hero per turn; the party shares the pouch)`;
     b.disabled = busy || G.turn.ware || G.stage !== 'scene';
-    if (mode.kind === 'ware' && mode.w.id === w.id) b.classList.add('active');
+    if (mode.kind === 'ware' && mode.w.key === w.key) b.classList.add('active');
     b.onclick = () => { if (mode.kind === 'ware' && mode.w.id === w.id) return cancelMode(); mode = { kind: 'ware', w }; refresh(); };
     wa.appendChild(b);
   }
@@ -368,7 +395,7 @@ function refresh(light = false) {
     const chip = (k, n, label, color) => n ? `<button class="sk ${spendKind === k ? 'on' : ''}" data-k="${k}" style="--c:${color}"><b>${n}</b> ${label}${n === 1 ? '' : 's'}</button>` : '';
     st.innerHTML = `<span>Next ${TOUCH ? 'tap' : 'click'} spends:</span>
       <button class="sk ${!spendKind ? 'on' : ''}" data-k="">Auto</button>${chip('crit', S.crits, 'crit', 'var(--legendary)')}${chip('hit', S.hits, 'hit', 'var(--brass2)')}${chip('minion', S.minion, 'minion-only hit', 'var(--good)')}
-      <span class="dim">One hit per ${TOUCH ? 'tap' : 'click'} on a red-ringed foe. Auto puts crits on elites and bosses and plain hits on minions. Hits keep until End turn.</span>`;
+      <span class="dim">One hit per ${TOUCH ? 'tap' : 'click'} on a red-ringed foe. Auto puts crits on elites and bosses and plain hits on minions. Hits keep until ${G.party.length > 1 ? 'End round' : 'End turn'}.</span>`;
     st.querySelectorAll('.sk').forEach(b => b.onclick = () => { spendKind = b.dataset.k || null; refresh(); });  } else st.hidden = true;
   // targeting bar
   const tg = $('#targeting');
@@ -390,6 +417,16 @@ function refresh(light = false) {
     tg.querySelector('#tgGo').onclick = () => { const w = mode.w; mode = { kind: 'idle' }; act(() => R.useWare(G, w.id, rng)); };
   } else tg.hidden = true;
   updateHighlights();
+  // keep the camera's "centre" in the strip of map the HUD leaves visible
+  const topH = Math.max($('#topbar').getBoundingClientRect().bottom, $('#party').hidden ? 0 : $('#party').getBoundingClientRect().bottom);
+  const panel = [$('#targeting'), $('#strike')].find(x => !x.hidden);
+  const botTop = Math.min($('#bar').getBoundingClientRect().top, panel ? panel.getBoundingClientRect().top : innerHeight);
+  const offY = ((innerHeight - botTop) - topH) / 2;
+  if (Math.abs(offY - (view.offY || 0)) > 4) {
+    const was = view.offY || 0;
+    view.offY = offY;
+    if (TOUCH && G.pos) view.cam.y += (offY - was) / view.cam.zoom; // slide the map with the panels so the hero stays in view
+  }
 }
 
 // ================================================================== highlights and hover
@@ -402,8 +439,10 @@ function updateHighlights() {
     const spec = R.powerSpec(G, mode.p);
     const targets = R.powerTargets(G, mode.p);
     hl.targets = new Set(targets.map(c => key(c.x, c.y)));
+    hl.allyTargets = new Set(targets.filter(c => c.ally).map(c => c.id));
     if (spec.mode === 'self' && spec.radius) hl.area = areaKeys(G.pos, spec.radius);
     if (spec.mode === 'point' && hover && hl.targets.has(key(hover.x, hover.y))) hl.area = areaKeys(hover, spec.radius);
+    if (spec.mode === 'self' && spec.radius && G.party.length > 1) hl.allyTargets = new Set(R.standing(G).filter(q => q !== G.hero && dist(q.pos, G.pos) <= spec.radius).map(q => q.hid));
     if (spec.mode === 'foes') hl.picked = new Set(mode.picked.map(id => { const f = G.foes.find(q => q.id === id); return key(f.x, f.y); }));
     hl.inReach = new Set();
   } else if (!G.pit) {
@@ -467,10 +506,16 @@ function intentFor(t) {
   if (mode.kind === 'power') {
     const spec = R.powerSpec(G, mode.p), valid = R.powerTargets(G, mode.p);
     if (spec.mode === 'self' || !R.powerUsable(G, mode.p)) return null;
-    const f = R.foeAt(G, t.x, t.y);
-    if (spec.mode === 'foe' || spec.mode === 'foes') return f && valid.some(c => c.id === f.id) ? `${mode.p.name}: ${f.name}` : null;
+    const f = R.foeAt(G, t.x, t.y), ally = R.heroAt(G, t.x, t.y);
+    if (spec.mode === 'foe' || spec.mode === 'foes') {
+      if (f && valid.some(c => c.id === f.id)) return `${mode.p.name}: ${f.name}`;
+      if (ally && valid.some(c => c.id === ally.hid)) return `${mode.p.name}: ${ally.name}`;
+      return null;
+    }
     return valid.some(c => c.x === t.x && c.y === t.y) ? `${mode.p.name} here` : null;
   }
+  const other = R.heroAt(G, t.x, t.y);
+  if (other && other !== G.hero) return `Switch to ${other.name}`;
   const f = R.foeAt(G, t.x, t.y);
   if (f) {
     const reach = R.inReach(G, G.pos, f, R.heroReach(G));
@@ -546,6 +591,8 @@ function bindInput() {
     const f = t && R.foeAt(G, t.x, t.y);
     if (f && R.strikeLeft(G) && mode.kind === 'idle' && R.inReach(G, G.pos, f, R.heroReach(G))) { clearSel(); clickTile(t); return; }
     if (t && sel && t.x === sel.x && t.y === sel.y && intentFor(t)) { clearSel(); clickTile(t); return; }
+    const mate = t && mode.kind === 'idle' && R.heroAt(G, t.x, t.y);
+    if (mate && mate !== G.hero) { clearSel(); switchHero(G.party.indexOf(mate)); return; } // one tap switches heroes
     selectTile(t);
   });
   cv.addEventListener('contextmenu', e => e.preventDefault());
@@ -561,12 +608,13 @@ function bindInput() {
     else if (k === 'a' && R.canAttack(G) && R.foesInReach(G).length && !R.strikeLeft(G)) act(() => R.attack(G, rng));
     else if (k === 's' && R.canAct(G)) act(() => R.sprint(G));
     else if (k === 'e' || e.key === 'Enter') endTurn();
-    else if (k === 'i') inventory();
+    else if (e.key === 'Tab') { e.preventDefault(); const n = nextHero(); switchHero(n >= 0 ? n : (G.active + 1) % G.party.length); }
+    else if (k === 'i') inventory(G.active);
     else if (k === 'h' || k === '?') help();
     else if (k === 'c') view.centerOn(G.pos);
     else if (/^[1-9]$/.test(k)) { const p = R.powerList(G)[Number(k) - 1]; if (p) startPower(p); }
   });
-  $('#btnInv').onclick = () => inventory();
+  $('#btnInv').onclick = () => inventory(G.active);
   $('#btnHelp').onclick = () => help();
   $('#btnCenter').onclick = () => view.centerOn(G.pos);
   $('#btnSpeed').onclick = () => { speed = speed === 1 ? 2 : speed === 2 ? 3 : 1; $('#btnSpeed').textContent = `${speed}×`; };
@@ -576,6 +624,38 @@ function bindInput() {
 // Square-targeted powers (leap, blink, meteor…) pick the square under the finger, never a unit standing in front of it.
 function aimingAtSquare() { return mode.kind === 'power' && ['tile', 'point', 'walk'].includes(R.powerSpec(G, mode.p).mode); }
 function cancelMode() { if (mode.kind !== 'idle') { mode = { kind: 'idle' }; refresh(); } }
+// ------------------------------------------------------------------ the party
+// The next standing hero (after the active one) who still has something to do this round, or -1.
+function nextHero() {
+  const n = G.party.length;
+  for (let k = 1; k < n; k++) { const i = (G.active + k) % n; if (!R.heroDone(G, G.party[i])) return i; }
+  return -1;
+}
+function switchHero(i) {
+  if (busy || !G || i < 0 || i === G.active || !G.party[i]) return;
+  if (G.party[i].hp <= 0) return toast(G.party[i].name, 'Down until the scene is clear.', 'err');
+  clearSel();
+  mode = { kind: 'idle' };
+  spendKind = null;
+  R.selectHero(G, i);
+  view.centerOn(G.pos);
+  refresh();
+}
+// Portrait chips for every hero: health, ward, whether they still have a move or action. Tap to take control.
+function partyStrip() {
+  const el = $('#party');
+  if (!G || G.party.length < 2) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = G.party.map((h, i) => {
+    const sh = shown?.[h.hid], hp = sh ? sh.hp : h.hp, ward = sh ? sh.ward : h.ward, mx = R.derive(h).maxHp;
+    const state = h.hp <= 0 && !sh ? 'down' : hp <= 0 ? 'down' : G.cleared ? '' : R.heroDone(G, h) ? 'done' : h.turn?.acted ? 'acted' : 'ready';
+    const tag = { down: '✖ down', done: '✓ done', acted: 'acted', ready: 'ready', '': '' }[state];
+    return `<button class="mate ${i === G.active ? 'on' : ''} ${state}" data-i="${i}" style="--hc:${HERO_COLOR[h.cls]}">
+      <span class="nm">${R.CLASSES[h.cls].glyph} ${esc(h.name)}</span><span class="tag">${tag}</span>
+      <span class="bar"><i style="width:${Math.max(0, hp / mx) * 100}%"></i></span>${ward > 0 ? `<span class="wd">🛡${fmt(ward)}</span>` : ''}</button>`;
+  }).join('');
+  el.querySelectorAll('.mate').forEach(b => b.onclick = () => switchHero(Number(b.dataset.i)));
+}
 async function endTurn() {
   if (busy || !G || G.stage !== 'scene') return;
   if (G.cleared) return toast('The scene is clear', 'Open the chests, then take the spiral stair in the west wall.');
@@ -586,6 +666,8 @@ async function endTurn() {
 async function clickTile(t) {
   if (busy || !G || G.stage !== 'scene') return;
   if (mode.kind === 'power') return clickPower(t);
+  const other = R.heroAt(G, t.x, t.y);
+  if (other && other !== G.hero) return switchHero(G.party.indexOf(other));
   const f = R.foeAt(G, t.x, t.y);
   if (f) {
     if (R.strikeLeft(G)) { if (R.inReach(G, G.pos, f, R.heroReach(G))) return act(() => R.spend(G, f.id, rng, spendKind)); return toast(`${f.name} is out of reach`, 'Move closer, or spend your hits on a foe with a red ring.', 'err'); }
@@ -624,8 +706,10 @@ async function clickPower(t) {
   if (spec.mode === 'self' || !R.powerUsable(G, p)) return; // self powers fire only from the Use button
   const valid = R.powerTargets(G, p);
   if (spec.mode === 'foe' || spec.mode === 'foes') {
+    const ally = R.heroAt(G, t.x, t.y);
+    if (ally && valid.some(c => c.id === ally.hid)) return firePower({ ids: [ally.hid] });
     const f = R.foeAt(G, t.x, t.y);
-    if (!f || !valid.some(c => c.id === f.id)) return toast(p.name, 'Pick a highlighted foe.', 'err');
+    if (!f || !valid.some(c => c.id === f.id)) return toast(p.name, spec.allies ? 'Pick a highlighted ally or foe.' : 'Pick a highlighted foe.', 'err');
     if (spec.mode === 'foe') return firePower({ ids: [f.id] });
     mode.picked = mode.picked.includes(f.id) ? mode.picked.filter(x => x !== f.id) : [...mode.picked, f.id].slice(-(spec.max || 2));
     return refresh();
@@ -642,9 +726,9 @@ async function firePower(target, p = mode.p) {
 }
 
 // ================================================================== items
-function itemCard(it, { actions = '', compare = true } = {}) {
+function itemCard(it, { actions = '', compare = true, who } = {}) {
   const set = it.set && R.SETS[it.set];
-  const diff = compare && G ? R.compareItem(G, it) : null;
+  const diff = compare && G ? R.compareItem(G, it, who) : null;
   const stats = Object.entries(it.stats).map(([k, v]) => {
     const d = diff?.find(x => x.k === k);
     const delta = d ? d.then - d.now : 0;
@@ -656,88 +740,100 @@ function itemCard(it, { actions = '', compare = true } = {}) {
 }
 function showLoot() {
   const all = pendingLoot.splice(0);
-  const items = all.flatMap(l => l.items).filter(it => G.hero.bag.some(b => b.id === it.id));
+  const items = all.flatMap(l => l.items).filter(it => G.bag.some(b => b.id === it.id));
   if (!items.length) return;
+  const eqBtns = it => G.party.length > 1 ? G.party.map((h, i) => `<button class="${i === G.active ? 'primary' : ''}" data-eq="${it.id}" data-who="${i}" style="border-color:${HERO_COLOR[h.cls]}">${esc(h.name)}</button>`).join('') : `<button class="primary" data-eq="${it.id}" data-who="0">Equip</button>`;
   const p = modal(`<button class="close">✕</button><h2>${esc(all.map(l => l.from).join(' · '))}</h2>
-    <div class="items">${items.map(it => itemCard(it, { actions: `<button class="primary" data-eq="${it.id}">Equip</button>` })).join('')}</div>
+    ${G.party.length > 1 ? `<p class="dim">Equip on a hero now, or keep it in the party's satchel (🎒 Gear). ▲▼ compare with ${esc(G.hero.name)}'s gear.</p>` : ''}
+    <div class="items">${items.map(it => itemCard(it, { actions: eqBtns(it) })).join('')}</div>
     <div class="btnrow"><button id="lootOk" class="primary">Into the satchel</button></div>`, { onClose: () => refresh() });
   p.querySelector('.close').onclick = closeModal;
   p.querySelector('#lootOk').onclick = closeModal;
   p.querySelectorAll('[data-eq]').forEach(b => b.onclick = async () => {
-    R.equip(G, b.dataset.eq);
-    b.closest('.item').style.opacity = 0.4; b.disabled = true; b.textContent = 'Equipped';
+    const who = Number(b.dataset.who);
+    R.equip(G, b.dataset.eq, who);
+    const card = b.closest('.item');
+    card.style.opacity = 0.45; card.querySelectorAll('button').forEach(x => { x.disabled = true; });
+    card.querySelector('.acts').insertAdjacentHTML('beforeend', `<span class="dim">→ ${esc(G.party[who].name)}</span>`);
     await playFx(); refresh(); save();
   });
 }
-function abilityRows() {
-  const pw = R.powerList(G).map(p => {
+function abilityRows(who = G.active) {
+  const hero = G.party[who];
+  const pw = R.powersFor(hero).map(p => {
     const spec = R.powerSpec(G, p), how = R.powerText(p) === p.text && spec.text !== p.text ? spec.text : '';
-    const tag = p.attack ? 'attack power' : spec.strike ? 'move + strike' : p.set ? `${R.SETS[p.set].name} set (${p.pieces} piece${p.pieces > 1 ? 's' : ''})` : R.CLASSES[G.hero.cls].name;
+    const tag = p.attack ? 'attack power' : spec.strike ? 'move + strike' : p.set ? `${R.SETS[p.set].name} set (${p.pieces} piece${p.pieces > 1 ? 's' : ''})` : R.CLASSES[hero.cls].name;
     return `<div class="abil" style="${p.set ? `border-left-color:${R.SETS[p.set].color}` : ''}"><b>${esc(p.name)}</b> <span class="dim">${p.cost} energy · ${esc(tag)}</span><div>${esc(R.powerText(p))}</div>${how ? `<div class="how">▸ ${esc(how)}</div>` : ''}${p.boosted?.length ? `<div class="dim">Boosted by ${esc(p.boosted.join(', '))}</div>` : ''}</div>`;
   }).join('');
-  const wares = (G.hero.consumables || []).map(w => R.CONSUMABLES[w.key]).filter(Boolean)
-    .map(C => `<div class="abil ware"><b>${esc(C.name)}</b> <span class="dim">ware · free, one per turn</span><div>${esc(C.text)}</div></div>`).join('');
+  const wares = (G.wares || []).map(w => R.CONSUMABLES[w.key]).filter(Boolean)
+    .map(C => `<div class="abil ware"><b>${esc(C.name)}</b> <span class="dim">ware · shared · free, one per hero per turn</span><div>${esc(C.text)}</div></div>`).join('');
   return pw + wares;
 }
-function inventory(tab = 'gear') {
+let invWho = null;
+function inventory(who = invWho ?? G?.active) {
   if (!G) return;
-  const h = G.hero, s = R.heroStats(G);
+  invWho = who = Math.min(who ?? 0, G.party.length - 1);
+  const h = G.party[who], s = R.derive(h);
+  const tabsHtml = G.party.length > 1 ? `<div class="tabs heroes">${G.party.map((q, i) => `<button data-hero="${i}" class="${i === who ? 'on' : ''}" style="border-color:${HERO_COLOR[q.cls]}">${R.CLASSES[q.cls].glyph} ${esc(q.name)}</button>`).join('')}</div>` : '';
   const slots = R.SLOTS.map(sl => `<div class="slot"><div class="lbl">${esc(SLOT_LABEL[sl])}</div>${h.gear[sl] ? itemCard(h.gear[sl], { compare: false, actions: `<button data-un="${sl}">Unequip</button>` }) : '<span class="dim">empty</span>'}</div>`).join('');
   const counts = {};
   for (const it of Object.values(h.gear)) if (it?.set) counts[it.set] = (counts[it.set] || 0) + 1;
   const setRows = Object.entries(counts).map(([k, n]) => `<div style="color:${R.SETS[k].color}">${esc(R.SETS[k].name)} ${n}/4 · ${esc(R.SETS[k].power.name)}${R.SETS[k].bonuses.map(b => ` <span class="${n >= b.n ? '' : 'dim'}">[${b.n}: ${esc(R.statsText(b.stats))}]</span>`).join('')}</div>`).join('') || '<div class="dim">No set pieces equipped. One piece of a set unlocks its power.</div>';
   const syn = R.SYNERGIES.filter(sy => (h.unlocked || []).includes(`syn:${sy.key}`)).map(sy => `<div>✦ <b>${esc(sy.name)}</b>: ${esc(R.synergyText(sy))}</div>`).join('') || `<div class="dim">${R.SYNERGIES.length} hidden synergies wait to be discovered by mixing sets.</div>`;
   const stat = (l, v) => `<span>${l}</span><span>${v}</span>`;
-  const p = modal(`<button class="close">✕</button><h2>${esc(h.name)} <span class="dim" style="font-size:14px">${h.name === R.CLASSES[h.cls].name ? '' : `the ${esc(R.CLASSES[h.cls].name)} · `}${h.favour || 0} Favour</span></h2>
+  const p = modal(`<button class="close">✕</button><h2>${esc(h.name)} <span class="dim" style="font-size:14px">${h.name === R.CLASSES[h.cls].name ? '' : `the ${esc(R.CLASSES[h.cls].name)} · `}party Favour ${G.favour || 0}</span></h2>${tabsHtml}
     <div class="inv"><div>
       <div class="statgrid">${stat('Max health', fmt(s.maxHp))}${stat('Armor', s.armor + '%')}${stat('Attack dice', s.dice)}${stat('Damage per hit', fmt(s.damage))}${stat('Crit multiplier', '×' + s.critMult)}${stat('Cleave', s.cleave || 0)}${stat('Energy per round', s.energyPerRound)}${stat('Energy per kill', s.energyPerKill)}${stat('Max energy', s.maxEnergy)}${stat('Move', s.move)}${stat('Reach', s.reach || 'melee')}</div>
-      <h3>Abilities</h3><div class="abils">${abilityRows()}</div>
+      <h3>Abilities</h3><div class="abils">${abilityRows(who)}</div>
       <h3 style="margin-top:10px">Sets</h3><div class="sets">${setRows}</div>
       <h3 style="margin-top:10px">Synergies</h3><div class="sets">${syn}</div>
       <h3 style="margin-top:10px">Equipped</h3><div class="slots">${slots}</div>
     </div><div>
-      <h3>Satchel (${(h.bag || []).length})</h3>
-      <div class="items">${(h.bag || []).map(it => itemCard(it, { actions: `<button class="primary" data-eq="${it.id}">Equip</button>${G.stage === 'camp' ? `<button data-sell="${it.id}">Sell ${R.SELL_VALUE[it.rarity]}✦</button>` : `<button data-drop="${it.id}">Drop</button>`}` })).join('') || '<div class="dim">Empty. Chests, elites and bosses carry loot.</div>'}</div>
+      <h3>${G.party.length > 1 ? 'Party satchel' : 'Satchel'} (${G.bag.length})</h3>${G.party.length > 1 ? `<p class="dim" style="margin:0 0 6px">▲▼ compare with ${esc(h.name)}'s gear.</p>` : ''}
+      <div class="items">${G.bag.map(it => itemCard(it, { who, actions: `<button class="primary" data-eq="${it.id}">Equip on ${esc(h.name)}</button>${G.stage === 'camp' ? `<button data-sell="${it.id}">Sell ${R.SELL_VALUE[it.rarity]}✦</button>` : `<button data-drop="${it.id}">Drop</button>`}` })).join('') || '<div class="dim">Empty. Chests, elites and bosses carry loot.</div>'}</div>
     </div></div>`, { onClose: () => refresh() });
   p.querySelector('.close').onclick = closeModal;
-  const again = () => { const m = $('#modal'); const oc = m.onClose; m.onClose = null; inventory(); $('#modal').onClose = oc; };
-  p.querySelectorAll('[data-eq]').forEach(b => b.onclick = async () => { R.equip(G, b.dataset.eq); await playFx(); save(); again(); });
-  p.querySelectorAll('[data-un]').forEach(b => b.onclick = () => { R.unequip(G, b.dataset.un); save(); again(); });
+  const again = (w = who) => { const m = $('#modal'); const oc = m.onClose; m.onClose = null; inventory(w); $('#modal').onClose = oc; };
+  p.querySelectorAll('[data-hero]').forEach(b => b.onclick = () => again(Number(b.dataset.hero)));
+  p.querySelectorAll('[data-eq]').forEach(b => b.onclick = async () => { R.equip(G, b.dataset.eq, who); G.fx = G.fx.filter(e => { if (e.t === 'unlock') toast(e.title, e.text, 'unlock', 9000); return false; }); save(); again(); });
+  p.querySelectorAll('[data-un]').forEach(b => b.onclick = () => { R.unequip(G, b.dataset.un, who); save(); again(); });
   p.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => { R.discard(G, b.dataset.drop); save(); again(); });
   p.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => { R.sell(G, b.dataset.sell); save(); again(); });
 }
 
 // ================================================================== the Rakshasa's camp
+let campWho = 0;
 function camp(tab = 'sell', line = pickLine(LINES.open, rng)) {
   $('#hud').hidden = true;
-  const h = G.hero;
+  campWho = Math.min(campWho, G.party.length - 1);
+  const h = G.party[campWho];
+  const heroTabs = G.party.length > 1 ? `<div class="tabs heroes">Boons for: ${G.party.map((q, i) => `<button data-who="${i}" class="${i === campWho ? 'on' : ''}" style="border-color:${HERO_COLOR[q.cls]}">${R.CLASSES[q.cls].glyph} ${esc(q.name)}</button>`).join('')}</div>` : '';
   const tabs = ['sell', 'boons', 'wares', 'crown'].map(t => `<button data-tab="${t}" class="${t === tab ? 'on' : ''}">${{ sell: 'Sell gear', boons: 'Boons', wares: 'Wares', crown: 'Three-Card Crown' }[t]}</button>`).join('');
   let body = '';
-  if (tab === 'sell') body = `<div class="items">${(h.bag || []).map(it => itemCard(it, { actions: `<button class="primary" data-sell="${it.id}">Sell for ${R.SELL_VALUE[it.rarity]} Favour</button><button data-eq="${it.id}">Equip</button>` })).join('') || '<div class="dim">Your satchel is empty.</div>'}</div>`;
-  if (tab === 'boons') body = `<div class="shop">${Object.entries(R.BOONS).map(([k, B]) => { const price = R.boonPrice(h, k), locked = R.boonLocked(h, k); return `<div class="ware"><div><b>${esc(B.name)}</b>${esc(B.text)}${B.once ? ' <span class="dim">(once)</span>' : ''}${h.boonBuys?.[k] ? ` <span class="dim">· owned ×${h.boonBuys[k]}</span>` : ''}</div><button data-boon="${k}" ${locked || (h.favour || 0) < price ? 'disabled' : ''}>${locked ? 'Owned' : price + ' ✦'}</button></div>`; }).join('')}</div>`;
-  if (tab === 'wares') body = `<div class="shop">${Object.entries(R.CONSUMABLES).map(([k, C]) => `<div class="ware">${consumableSVG(k, 44)}<div><b>${esc(C.name)}</b>${esc(C.text)}</div><button data-ware="${k}" ${(h.favour || 0) < C.cost ? 'disabled' : ''}>${C.cost} ✦</button></div>`).join('')}</div><p class="dim">Wares are free to use in a fight, one per turn. You carry ${(h.consumables || []).length}.</p>`;
+  if (tab === 'sell') body = `<div class="items">${G.bag.map(it => itemCard(it, { compare: G.party.length < 2, actions: `<button class="primary" data-sell="${it.id}">Sell for ${R.SELL_VALUE[it.rarity]} Favour</button>` })).join('') || '<div class="dim">The satchel is empty.</div>'}</div><p class="dim">Equip gear from 🎒 Gear before you sell.</p>`;
+  if (tab === 'boons') body = `${heroTabs}<div class="shop">${Object.entries(R.BOONS).map(([k, B]) => { const price = R.boonPrice(h, k), locked = R.boonLocked(h, k); return `<div class="ware"><div><b>${esc(B.name)}</b>${esc(B.text)}${B.once ? ' <span class="dim">(once)</span>' : ''}${h.boonBuys?.[k] ? ` <span class="dim">· owned ×${h.boonBuys[k]}</span>` : ''}</div><button data-boon="${k}" ${locked || (G.favour || 0) < price ? 'disabled' : ''}>${locked ? 'Owned' : price + ' ✦'}</button></div>`; }).join('')}</div>`;
+  if (tab === 'wares') body = `<div class="shop">${Object.entries(R.CONSUMABLES).map(([k, C]) => `<div class="ware">${consumableSVG(k, 44)}<div><b>${esc(C.name)}</b>${esc(C.text)}</div><button data-ware="${k}" ${(G.favour || 0) < C.cost ? 'disabled' : ''}>${C.cost} ✦</button></div>`).join('')}</div><p class="dim">Wares go in the party's pouch: free to use in a fight, one per hero per turn. You carry ${G.wares.length}.</p>`;
   if (tab === 'crown') body = crownHTML();
-  const p = modal(`<div class="rak"><img src="assets/rakshasa-face.jpg" alt="The Rakshasa"><div><h2>The Rakshasa's Rug</h2><div class="line">“${esc(line)}”</div><div class="dim" style="margin-top:4px">You rest by his lamp: health restored. Favour: <b style="color:var(--brass2)">${h.favour || 0} ✦</b></div></div></div>
+  const p = modal(`<div class="rak"><img src="assets/rakshasa-face.jpg" alt="The Rakshasa"><div><h2>The Rakshasa's Rug</h2><div class="line">“${esc(line)}”</div><div class="dim" style="margin-top:4px">You rest by his lamp: ${G.party.length > 1 ? 'the party is' : 'health'} restored. Favour: <b style="color:var(--brass2)">${G.favour || 0} ✦</b></div></div></div>
     <div class="tabs">${tabs}<span style="flex:1"></span><button id="campInv">🎒 Gear</button><button class="primary" id="campGo">Onward: ${esc(G.adv.acts[G.act].name)}</button></div>${body}`);
   p.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => camp(b.dataset.tab, line));
   p.querySelector('#campGo').onclick = () => { R.leaveCamp(G); $('#modal').hidden = true; save(); toast('The Rakshasa', pickLine(LINES.close, rng)); beginScene(); };
-  p.querySelector('#campInv').onclick = () => { $('#modal').onClose = null; inventory(); $('#modal').onClose = () => camp(tab, line); };
+  p.querySelector('#campInv').onclick = () => { $('#modal').onClose = null; inventory(campWho); $('#modal').onClose = () => camp(tab, line); };
+  p.querySelectorAll('[data-who]').forEach(b => b.onclick = () => { campWho = Number(b.dataset.who); camp(tab, line); });
   p.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => { const r = R.sell(G, b.dataset.sell); save(); camp(tab, pickLine(LINES.sell[r.rarity] || LINES.sell.common, rng)); });
-  p.querySelectorAll('[data-eq]').forEach(b => b.onclick = async () => { R.equip(G, b.dataset.eq); G.fx = G.fx.filter(e => { if (e.t === 'unlock') toast(e.title, e.text, 'unlock', 9000); return false; }); save(); camp(tab, line); });
-  p.querySelectorAll('[data-boon]').forEach(b => b.onclick = () => { const r = R.buyBoon(G, b.dataset.boon); save(); camp(tab, r.ok ? pickLine(LINES.boon, rng) : r.error); });
+  p.querySelectorAll('[data-boon]').forEach(b => b.onclick = () => { const r = R.buyBoon(G, b.dataset.boon, campWho); save(); camp(tab, r.ok ? pickLine(LINES.boon, rng) : r.error); });
   p.querySelectorAll('[data-ware]').forEach(b => b.onclick = () => { const r = R.buyWare(G, b.dataset.ware); save(); camp(tab, r.ok ? pickLine(LINES.buy, rng) : r.error); });
   if (tab === 'crown') bindCrown(p, line);
 }
 // Three-Card Crown against the house: 3 cards, one redraw of up to 2, ties go to the house.
 let crown = null;
 function crownHTML() {
-  const h = G.hero;
   G.camp = G.camp || {};
   const played = G.camp.hands || 0;
   if (!crown || crown.phase === 'done') {
     const last = crown?.phase === 'done' ? `<div class="cards">${crown.house.map(c => cardSVG(c, { width: 70 })).join('')}</div><p style="text-align:center">House: <b>${esc(crown.houseHand)}</b> · You: <b>${esc(crown.hand)}</b> · <b style="color:${crown.win ? 'var(--good)' : 'var(--bad)'}">${crown.win ? 'You win' : 'The house wins'}</b>${crown.prizeText ? ` · ${esc(crown.prizeText)}` : ''}</p><div class="cards">${crown.cards.map(c => cardSVG(c, { width: 70 })).join('')}</div>` : '';
     return `${last}<p>Three cards each; you may redraw up to two, once. Best hand wins (three of a kind, run, flush, pair, high card); ties go to the house. ${3 - played} hand${3 - played === 1 ? '' : 's'} left tonight.</p>
-      <div class="btnrow" style="justify-content:flex-start">${[1, 2, 3].map(w => `<button data-wager="${w}" ${played >= 3 || (h.favour || 0) < w ? 'disabled' : ''}>Wager ${w} ✦</button>`).join('')}<button data-wager="0" ${played >= 3 ? 'disabled' : ''}>Play for a prize (a ware)</button></div>`;
+      <div class="btnrow" style="justify-content:flex-start">${[1, 2, 3].map(w => `<button data-wager="${w}" ${played >= 3 || (G.favour || 0) < w ? 'disabled' : ''}>Wager ${w} ✦</button>`).join('')}<button data-wager="0" ${played >= 3 ? 'disabled' : ''}>Play for a prize (a ware)</button></div>`;
   }
   return `<p>Your hand. Click up to two cards to redraw, then reveal. Wager: ${crown.wager ? crown.wager + ' ✦' : 'a prize'}.</p>
     <div class="cards">${crown.house.map(() => cardBackSVG({ width: 70 })).join('')}</div>
@@ -763,11 +859,10 @@ function bindCrown(p, line) {
     const ps = scoreHand(crown.cards), hs = scoreHand(crown.house);
     crown.hand = handName(ps); crown.houseHand = handName(hs);
     crown.win = compareHands(ps, hs) > 0;
-    const h = G.hero;
-    if (crown.wager) h.favour = Math.max(0, (h.favour || 0) + (crown.win ? crown.wager : -crown.wager));
+    if (crown.wager) G.favour = Math.max(0, (G.favour || 0) + (crown.win ? crown.wager : -crown.wager));
     else if (crown.win) {
       const keys = Object.keys(R.CONSUMABLES), k = keys[Math.floor(rng() * keys.length)];
-      (h.consumables ||= []).push({ id: 'w' + Date.now().toString(36), key: k });
+      G.wares.push({ id: 'w' + Date.now().toString(36), key: k });
       crown.prizeText = `you win a ${R.CONSUMABLES[k].name}`;
     }
     crown.phase = 'done';
@@ -780,6 +875,7 @@ function bindCrown(p, line) {
 function help(after) {
   const foes = Object.entries(R.FOE_ABILITIES).map(([, A]) => `<p>${A.icon} <b>${esc(A.name)}</b>: ${esc(A.text.replace(/″/g, ' squares'))}</p>`).join('');
   const p = modal(`<button class="close">✕</button><h2>How to play</h2><div class="help">
+    <h3>Your party</h3><p>Pick 1 to 4 heroes on the title screen; you control them all. Each hero gets their own move and action every round, in any order: tap a hero (on the map or in the party strip) to take control, or press <b>Next</b> (<kbd>Tab</kbd>). When everyone is done, <b>End round</b>: each foe goes for the nearest hero it can reach (Iron Bulwark makes them fight the Ironclad). A hero at 0 health is <b>down</b> until the scene is clear, then gets back up with ${Math.round(R.SOLO.revive * 100)}% health; the run only ends if the whole party falls. Gear, the satchel, Favour and wares are shared; equip anything on anyone.</p>
     <h3>Your turn</h3><p>A <b>move</b> and <b>one action</b> (Attack, a Power, or Sprint), in any order. Blue squares show where you can walk. Climbing one level costs an extra square; rough ground costs 2. Ledges two levels high need a leap, grapple or teleport.</p>
     <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend one at a time by clicking foes in reach (pick Crit or Hit in the panel, or leave it on Auto); unspent hits stay until you end your turn, so you can move and keep striking: each hit kills a minion or deals your damage per hit to an elite or boss (a crit multiplies it). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
     <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
@@ -789,7 +885,7 @@ function help(after) {
     <h3>Chasms</h3><p>A Slam can hurl you into a chasm: a fall costs 10% of your health and foes lose you. Climbing out is your action: d6 4+, with +1 for each failed try. Minions pushed into a chasm are gone; elites climb out hurt.</p>
     <h3>Waves and scenes</h3><p>Each scene comes from the Delvers' Ledger adventure planner: skirmishes, swarms, elite packs, gauntlets and bosses, sized to your gear when each act began. Reinforcements arrive at the end of later rounds. Clear every foe and the turns stop: walk freely, open the chests (gold beacons) and take the glowing spiral stair in the west wall; the buttons at the bottom walk you there. Between acts the Rakshasa buys your spare gear for Favour and sells boons and wares.</p>
     <h3>Foe abilities</h3>${foes}
-    <h3>Keys</h3><p><kbd>A</kbd> attack · <kbd>S</kbd> sprint · <kbd>1</kbd>–<kbd>9</kbd> powers · <kbd>E</kbd>/<kbd>Enter</kbd> end turn · <kbd>I</kbd> gear · <kbd>C</kbd> centre · arrows or drag to pan · wheel to zoom · <kbd>Esc</kbd>/right-click cancels.</p>
+    <h3>Keys</h3><p><kbd>A</kbd> attack · <kbd>S</kbd> sprint · <kbd>1</kbd>–<kbd>9</kbd> powers · <kbd>E</kbd>/<kbd>Enter</kbd> end round · <kbd>Tab</kbd> next hero · <kbd>I</kbd> gear · <kbd>C</kbd> centre · arrows or drag to pan · wheel to zoom · <kbd>Esc</kbd>/right-click cancels.</p>
     <h3>On a phone</h3><p>Tap a square or foe to select it: the path, any free blows and the foe's details show, with a button to confirm. Tap it again (or the button) to do it. Banked hits are spent with a single tap on a foe in reach. Drag to pan, pinch to zoom.</p>
     </div><div class="credits">Art: Kenney "Isometric Miniature Dungeon" (CC0) · Flare-format monster renders from OpenGameArt: orcs, spiders and werebear by johndh and Wciow (CC-BY-SA 3.0), slime and demon by ryan.dansie (CC0 / CC-BY-SA 3.0) · Rakshasa portrait from Delvers' Ledger · cliffs, effects, dice and cards drawn in code.</div>`, { onClose: after });
   p.querySelector('.close').onclick = closeModal;
@@ -801,7 +897,7 @@ function menu() {
   p.querySelector('.close').onclick = closeModal;
   p.querySelector('#mHelp').onclick = () => help();
   p.querySelector('#mRetry').onclick = () => { $('#modal').hidden = true; R.retryScene(G, rng); G.fx = G.fx.filter(e => e.t !== 'spawn' && e.t !== 'log'); save(); enterScene(); };
-  p.querySelector('#mTitle').onclick = () => { if (confirm('Abandon this run? Your hero will be lost.')) { clearSave(); G = null; view.G = null; titleScreen(); } };
+  p.querySelector('#mTitle').onclick = () => { if (confirm('Abandon this run? Your party will be lost.')) { clearSave(); G = null; view.G = null; titleScreen(); } };
 }
 
 // expose for debugging and automated play-tests
