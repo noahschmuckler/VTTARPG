@@ -59,6 +59,7 @@ function clearSave() { try { localStorage.removeItem(SAVE); } catch { /* ignore 
 function modal(html, { narrow = false, onClose = null } = {}) {
   const m = $('#modal'), p = m.querySelector('.panel');
   p.className = 'panel' + (narrow ? ' narrow' : '');
+  p.scrollTop = 0;
   p.innerHTML = html;
   m.hidden = false;
   m.onClose = onClose;
@@ -609,12 +610,12 @@ function bindInput() {
     else if (k === 's' && R.canAct(G)) act(() => R.sprint(G));
     else if (k === 'e' || e.key === 'Enter') endTurn();
     else if (e.key === 'Tab') { e.preventDefault(); const n = nextHero(); switchHero(n >= 0 ? n : (G.active + 1) % G.party.length); }
-    else if (k === 'i') inventory(G.active);
+    else if (k === 'i') (G.party.length > 1 ? armory(null) : inventory(G.active));
     else if (k === 'h' || k === '?') help();
     else if (k === 'c') view.centerOn(G.pos);
     else if (/^[1-9]$/.test(k)) { const p = R.powerList(G)[Number(k) - 1]; if (p) startPower(p); }
   });
-  $('#btnInv').onclick = () => inventory(G.active);
+  $('#btnInv').onclick = () => (G.party.length > 1 ? armory(null) : inventory(G.active));
   $('#btnHelp').onclick = () => help();
   $('#btnCenter').onclick = () => view.centerOn(G.pos);
   $('#btnSpeed').onclick = () => { speed = speed === 1 ? 2 : speed === 2 ? 3 : 1; $('#btnSpeed').textContent = `${speed}×`; };
@@ -746,7 +747,9 @@ function showLoot() {
   const p = modal(`<button class="close">✕</button><h2>${esc(all.map(l => l.from).join(' · '))}</h2>
     ${G.party.length > 1 ? `<p class="dim">Equip on a hero now, or keep it in the party's satchel (🎒 Gear). ▲▼ compare with ${esc(G.hero.name)}'s gear.</p>` : ''}
     <div class="items">${items.map(it => itemCard(it, { actions: eqBtns(it) })).join('')}</div>
-    <div class="btnrow"><button id="lootOk" class="primary">Into the satchel</button></div>`, { onClose: () => refresh() });
+    <div class="btnrow">${G.party.length > 1 ? '<button id="lootCmp">Compare in party gear</button>' : ''}<button id="lootOk" class="primary">Into the satchel</button></div>`, { onClose: () => refresh() });
+  const cmp = p.querySelector('#lootCmp');
+  if (cmp) cmp.onclick = () => { $('#modal').onClose = null; armory(items.find(it => G.bag.some(b => b.id === it.id))?.id || null); };
   p.querySelector('.close').onclick = closeModal;
   p.querySelector('#lootOk').onclick = closeModal;
   p.querySelectorAll('[data-eq]').forEach(b => b.onclick = async () => {
@@ -781,7 +784,7 @@ function inventory(who = invWho ?? G?.active) {
   const setRows = Object.entries(counts).map(([k, n]) => `<div style="color:${R.SETS[k].color}">${esc(R.SETS[k].name)} ${n}/4 · ${esc(R.SETS[k].power.name)}${R.SETS[k].bonuses.map(b => ` <span class="${n >= b.n ? '' : 'dim'}">[${b.n}: ${esc(R.statsText(b.stats))}]</span>`).join('')}</div>`).join('') || '<div class="dim">No set pieces equipped. One piece of a set unlocks its power.</div>';
   const syn = R.SYNERGIES.filter(sy => (h.unlocked || []).includes(`syn:${sy.key}`)).map(sy => `<div>✦ <b>${esc(sy.name)}</b>: ${esc(R.synergyText(sy))}</div>`).join('') || `<div class="dim">${R.SYNERGIES.length} hidden synergies wait to be discovered by mixing sets.</div>`;
   const stat = (l, v) => `<span>${l}</span><span>${v}</span>`;
-  const p = modal(`<button class="close">✕</button><h2>${esc(h.name)} <span class="dim" style="font-size:14px">${h.name === R.CLASSES[h.cls].name ? '' : `the ${esc(R.CLASSES[h.cls].name)} · `}party Favour ${G.favour || 0}</span></h2>${tabsHtml}
+  const p = modal(`<button class="close">✕</button><h2>${esc(h.name)} <span class="dim" style="font-size:14px">${h.name === R.CLASSES[h.cls].name ? '' : `the ${esc(R.CLASSES[h.cls].name)} · `}party Favour ${G.favour || 0}</span></h2>${G.party.length > 1 ? '<button id="toArmory" style="margin-bottom:8px">⇄ Party gear: compare and swap</button>' : ''}${tabsHtml}
     <div class="inv"><div>
       <div class="statgrid">${stat('Max health', fmt(s.maxHp))}${stat('Armor', s.armor + '%')}${stat('Attack dice', s.dice)}${stat('Damage per hit', fmt(s.damage))}${stat('Crit multiplier', '×' + s.critMult)}${stat('Cleave', s.cleave || 0)}${stat('Energy per round', s.energyPerRound)}${stat('Energy per kill', s.energyPerKill)}${stat('Max energy', s.maxEnergy)}${stat('Move', s.move)}${stat('Reach', s.reach || 'melee')}</div>
       <h3>Abilities</h3><div class="abils">${abilityRows(who)}</div>
@@ -795,10 +798,103 @@ function inventory(who = invWho ?? G?.active) {
   p.querySelector('.close').onclick = closeModal;
   const again = (w = who) => { const m = $('#modal'); const oc = m.onClose; m.onClose = null; inventory(w); $('#modal').onClose = oc; };
   p.querySelectorAll('[data-hero]').forEach(b => b.onclick = () => again(Number(b.dataset.hero)));
+  const ta = p.querySelector('#toArmory'); if (ta) ta.onclick = () => { $('#modal').onClose = null; armory(null); };
   p.querySelectorAll('[data-eq]').forEach(b => b.onclick = async () => { R.equip(G, b.dataset.eq, who); G.fx = G.fx.filter(e => { if (e.t === 'unlock') toast(e.title, e.text, 'unlock', 9000); return false; }); save(); again(); });
   p.querySelectorAll('[data-un]').forEach(b => b.onclick = () => { R.unequip(G, b.dataset.un, who); save(); again(); });
   p.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => { R.discard(G, b.dataset.drop); save(); again(); });
   p.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => { R.sell(G, b.dataset.sell); save(); again(); });
+}
+
+// ================================================================== the armory: the whole party's gear side by side
+const SHORT = { maxHp: '❤', damage: '⚔', dice: 'dice', armor: '⛨', critMult: 'crit ×', cleave: 'cleave', energyPerRound: 'en/round', energyPerKill: 'en/kill', maxEnergy: 'max en' };
+const WEIGHT = { maxHp: 1, damage: 2, dice: 400, armor: 30, critMult: 300, cleave: 150, energyPerRound: 15, energyPerKill: 10, maxEnergy: 3 };
+const fmtDelta = (k, v) => `${v > 0 ? '+' : '−'}${k === 'armor' ? Math.abs(v) + '%' : k === 'critMult' ? Math.abs(v) : fmt(Math.abs(v))} ${SHORT[k]}`;
+const scoreOf = d => Object.entries(d.delta).reduce((t, [k, v]) => t + v * (WEIGHT[k] || 1), 0) + d.gained.length * 400 - d.lost.length * 400;
+const itemLine = it => Object.entries(it.stats).slice(0, 2).map(([k, v]) => fmtDelta(k, v)).join(' · ');
+let armPick = null;
+function armory(pick = armPick) {
+  if (!G) return;
+  const prevScroll = $('#modal .panel')?.scrollTop || 0;
+  armPick = pick && R.locate(G, pick) ? pick : null;
+  const loc = armPick && R.locate(G, armPick);
+  const n = G.party.length;
+  const head = G.party.map((h, i) => {
+    const s = R.derive(h), c = {};
+    for (const it of Object.values(h.gear)) if (it?.set) c[it.set] = (c[it.set] || 0) + 1;
+    const syns = R.SYNERGIES.filter(sy => (h.unlocked || []).includes(`syn:${sy.key}`) && Object.entries(sy.needs).every(([k, q]) => (c[k] || 0) >= q));
+    return `<div class="ah" style="--hc:${HERO_COLOR[h.cls]}"><button class="hn" data-hero="${i}">${R.CLASSES[h.cls].glyph} ${esc(h.name)}</button>
+      <div class="hs">❤ ${fmt(s.maxHp)} · ⛨ ${s.armor}%<br>⚔ ${fmt(s.damage)} × ${s.dice}d6${s.critMult > 2 ? ` · crit ×${s.critMult}` : ''}</div>
+      <div class="hsets">${Object.entries(c).map(([k, q]) => `<span class="sdot" style="--sc:${R.SETS[k].color}" title="${esc(R.SETS[k].name)}">${q}</span>`).join('')}${syns.map(sy => `<span class="syn" title="${esc(R.synergyText(sy))}">✦ ${esc(sy.name)}</span>`).join('')}</div></div>`;
+  }).join('');
+  // previews for the picked item, per destination hero
+  const pv = {};
+  if (loc) G.party.forEach((h, i) => { if (i !== loc.who) pv[i] = R.previewPlace(G, armPick, i); });
+  const rows = R.SLOTS.map(sl => `<div class="as">${esc(SLOT_LABEL[sl])}</div>` + G.party.map((h, i) => {
+    const it = h.gear[sl];
+    const picked = it && it.id === armPick;
+    const target = loc && loc.slot === sl && loc.who !== i;
+    let badge = '';
+    if (target) {
+      const mine = pv[i].find(d => d.who === i), sc = mine ? scoreOf(mine) : 0;
+      const gain = pv[i].some(d => d.gained.length), loss = pv[i].some(d => d.lost.length);
+      badge = `<span class="pvb ${sc > 0 ? 'up' : sc < 0 ? 'down' : ''}">${sc > 0 ? '▲' : sc < 0 ? '▼' : '='}${gain ? ' ✦' : ''}${loss ? ' ✖' : ''}</span>`;
+    }
+    return `<button class="ac ${picked ? 'picked' : ''} ${target ? 'target' : ''}" data-cell="${i}:${sl}" ${it ? `data-item="${it.id}"` : ''} style="${it ? `--rc:${rarityColor(it)}` : ''}">${it ? `<span class="in">${esc(it.name)}</span><span class="il">${esc(itemLine(it))}</span>` : '<span class="dim">—</span>'}${badge}</button>`;
+  }).join('')).join('');
+  const bagBySlot = R.SLOTS.map(sl => [sl, G.bag.filter(it => it.slot === sl)]).filter(([, l]) => l.length);
+  const bag = bagBySlot.length ? bagBySlot.map(([sl, list]) => `<div class="bagrow"><span class="as">${esc(SLOT_LABEL[sl])}</span>${list.map(it => `<button class="bi ${it.id === armPick ? 'picked' : ''}" data-item="${it.id}" style="--rc:${rarityColor(it)}"><span class="in">${esc(it.name)}</span><span class="il">${esc(itemLine(it))}</span></button>`).join('')}</div>`).join('') : '<p class="dim">The satchel is empty. Chests, elites and bosses carry loot.</p>';
+  // the picked item: what it would do on each hero
+  let detail = '';
+  if (loc) {
+    const owner = loc.who >= 0 ? G.party[loc.who] : null;
+    const opts = G.party.map((h, i) => {
+      if (i === loc.who) return '';
+      const list = pv[i], mine = list.find(d => d.who === i), sc = mine ? scoreOf(mine) : 0;
+      const lines = list.map(d => {
+        const who = G.party[d.who].name;
+        const parts = [...Object.entries(d.delta).map(([k, v]) => `<span class="${v > 0 ? 'up' : 'down'}">${fmtDelta(k, v)}</span>`), ...d.gained.map(g => `<span class="gain">✦ ${esc(g.name)}</span>`), ...d.lost.map(g => `<span class="lose">✖ ${esc(g.name)}</span>`)];
+        return `<div><b>${esc(who)}:</b> ${parts.join(' ') || '<span class="dim">no change</span>'}</div>`;
+      }).join('');
+      const swap = h.gear[loc.slot] ? ` (swaps for ${esc(h.gear[loc.slot].name)})` : '';
+      return `<div class="opt ${sc > 0 ? 'better' : sc < 0 ? 'worse' : ''}"><button class="${sc > 0 ? 'primary' : ''}" data-to="${i}" style="border-color:${HERO_COLOR[h.cls]}">Give to ${esc(h.name)}</button><span class="dim">${swap}</span>${lines}</div>`;
+    }).join('');
+    const back = owner ? `<div class="opt">${(() => { const d = R.previewPlace(G, armPick, -1); return `<button data-to="-1">Into the satchel</button>${d.map(x => `<div><b>${esc(G.party[x.who].name)}:</b> ${[...Object.entries(x.delta).map(([k, v]) => `<span class="${v > 0 ? 'up' : 'down'}">${fmtDelta(k, v)}</span>`), ...x.lost.map(g => `<span class="lose">✖ ${esc(g.name)}</span>`)].join(' ')}</div>`).join('')}`; })()}</div>` : '';
+    detail = `<div class="apick"><div class="aph"><div class="full">${itemCard(loc.item, { compare: false })}</div><div class="mini" style="--rc:${rarityColor(loc.item)}"><b>${esc(loc.item.name)}</b> <span class="dim">${esc(SLOT_LABEL[loc.item.slot])}</span><br><span class="il">${esc(R.statsText(loc.item.stats))}</span></div><div class="dim">${owner ? `Worn by ${esc(owner.name)}` : 'In the satchel'} · tap a highlighted slot or a button below.</div><button class="x" id="apX">✕</button></div><div class="opts">${opts}${back}</div></div>`;
+  }
+  // synergy tracker
+  const prog = R.synergyProgress(G).map(sp => {
+    const needs = Object.entries(sp.needs).map(([k, q]) => `<span class="need" style="--sc:${R.SETS[k].color}">${esc(R.SETS[k].name)} ×${q}</span>`).join(' + ');
+    const active = sp.heroes.filter(x => x.active).map(x => G.party[x.who].name);
+    const best = sp.heroes.filter(x => !x.active).sort((a, b) => a.missing - b.missing)[0];
+    const enough = Object.entries(sp.needs).every(([k, q]) => sp.pool[k] >= q);
+    const status = active.length ? `<span class="gain">active on ${esc(active.join(', '))}</span>` : best ? `<span class="dim">${esc(G.party[best.who].name)} is ${best.missing} piece${best.missing > 1 ? 's' : ''} away${enough ? '; the party holds enough pieces' : ''}</span>` : '';
+    return `<div class="sp ${active.length ? 'on' : ''}"><b>${sp.known ? esc(sp.name) : 'Hidden synergy'}</b> ${needs}<div>${sp.known ? `<span class="dim">${esc(sp.text)}</span> ` : ''}${status}</div></div>`;
+  }).join('');
+  const p = modal(`<button class="close">✕</button><h2>Party gear</h2>
+    <p class="dim armhelp">Tap any item, worn or in the satchel, to see what it would do on each hero (▲ better, ▼ worse, ✦ unlocks a set power or synergy, ✖ loses one), then tap a highlighted slot to move or swap it. Tap a hero's name for their abilities.</p>
+    ${detail}
+    <div class="agrid" style="--n:${n}"><div></div>${head}${rows}</div>
+    <h3>Satchel (${G.bag.length})</h3><div class="abag">${bag}</div>
+    <details class="syntrack" ${prog && G.party.length ? 'open' : ''}><summary>Synergies</summary><p class="dim">A synergy needs pieces of two sets on the <b>same</b> hero. Its effect stays secret until someone first wears the combination.</p>${prog}</details>`, { onClose: () => { armPick = null; refresh(); } });
+  p.className = 'panel wide' + (loc ? ' picking' : '');
+  p.scrollTop = prevScroll;
+  p.querySelector('.close').onclick = closeModal;
+  const again = id => { const m = $('#modal'), oc = m.onClose; m.onClose = null; armory(id); $('#modal').onClose = oc; };
+  const doPlace = async to => {
+    const id = armPick; const r = R.place(G, id, to);
+    if (!r.ok) return toast(r.error, '', 'err');
+    G.fx = G.fx.filter(e => { if (e.t === 'unlock') toast(e.title, e.text, 'unlock', 9000); return false; });
+    save(); again(null);
+  };
+  p.querySelectorAll('[data-item]').forEach(b => b.onclick = () => {
+    const cell = b.dataset.cell;
+    if (armPick && cell && b.classList.contains('target')) return doPlace(Number(cell.split(':')[0]));
+    again(b.dataset.item === armPick ? null : b.dataset.item);
+  });
+  p.querySelectorAll('.ac:not([data-item])').forEach(b => b.onclick = () => { if (b.classList.contains('target')) doPlace(Number(b.dataset.cell.split(':')[0])); });
+  p.querySelectorAll('[data-to]').forEach(b => b.onclick = () => doPlace(Number(b.dataset.to)));
+  p.querySelectorAll('[data-hero]').forEach(b => b.onclick = () => { const m = $('#modal'); m.onClose = null; inventory(Number(b.dataset.hero)); $('#modal').onClose = () => armory(); });
+  const x = p.querySelector('#apX'); if (x) x.onclick = () => again(null);
 }
 
 // ================================================================== the Rakshasa's camp
@@ -818,7 +914,7 @@ function camp(tab = 'sell', line = pickLine(LINES.open, rng)) {
     <div class="tabs">${tabs}<span style="flex:1"></span><button id="campInv">🎒 Gear</button><button class="primary" id="campGo">Onward: ${esc(G.adv.acts[G.act].name)}</button></div>${body}`);
   p.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => camp(b.dataset.tab, line));
   p.querySelector('#campGo').onclick = () => { R.leaveCamp(G); $('#modal').hidden = true; save(); toast('The Rakshasa', pickLine(LINES.close, rng)); beginScene(); };
-  p.querySelector('#campInv').onclick = () => { $('#modal').onClose = null; inventory(campWho); $('#modal').onClose = () => camp(tab, line); };
+  p.querySelector('#campInv').onclick = () => { $('#modal').onClose = null; if (G.party.length > 1) armory(null); else inventory(campWho); $('#modal').onClose = () => camp(tab, line); };
   p.querySelectorAll('[data-who]').forEach(b => b.onclick = () => { campWho = Number(b.dataset.who); camp(tab, line); });
   p.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => { const r = R.sell(G, b.dataset.sell); save(); camp(tab, pickLine(LINES.sell[r.rarity] || LINES.sell.common, rng)); });
   p.querySelectorAll('[data-boon]').forEach(b => b.onclick = () => { const r = R.buyBoon(G, b.dataset.boon, campWho); save(); camp(tab, r.ok ? pickLine(LINES.boon, rng) : r.error); });
@@ -875,7 +971,7 @@ function bindCrown(p, line) {
 function help(after) {
   const foes = Object.entries(R.FOE_ABILITIES).map(([, A]) => `<p>${A.icon} <b>${esc(A.name)}</b>: ${esc(A.text.replace(/″/g, ' squares'))}</p>`).join('');
   const p = modal(`<button class="close">✕</button><h2>How to play</h2><div class="help">
-    <h3>Your party</h3><p>Pick 1 to 4 heroes on the title screen; you control them all. Each hero gets their own move and action every round, in any order: tap a hero (on the map or in the party strip) to take control, or press <b>Next</b> (<kbd>Tab</kbd>). When everyone is done, <b>End round</b>: each foe goes for the nearest hero it can reach (Iron Bulwark makes them fight the Ironclad). A hero at 0 health is <b>down</b> until the scene is clear, then gets back up with ${Math.round(R.SOLO.revive * 100)}% health; the run only ends if the whole party falls. Gear, the satchel, Favour and wares are shared; equip anything on anyone.</p>
+    <h3>Your party</h3><p>Pick 1 to 4 heroes on the title screen; you control them all. Each hero gets their own move and action every round, in any order: tap a hero (on the map or in the party strip) to take control, or press <b>Next</b> (<kbd>Tab</kbd>). When everyone is done, <b>End round</b>: each foe goes for the nearest hero it can reach (Iron Bulwark makes them fight the Ironclad). A hero at 0 health is <b>down</b> until the scene is clear, then gets back up with ${Math.round(R.SOLO.revive * 100)}% health; the run only ends if the whole party falls. Gear, the satchel, Favour and wares are shared; equip anything on anyone. <b>Party gear</b> (🎒) lays every hero's gear side by side: tap an item to see what it would do on each hero, including any set power or synergy it would unlock or break, then tap to move or swap it. Its synergy tracker shows how close each hero is to every synergy.</p>
     <h3>Your turn</h3><p>A <b>move</b> and <b>one action</b> (Attack, a Power, or Sprint), in any order. Blue squares show where you can walk. Climbing one level costs an extra square; rough ground costs 2. Ledges two levels high need a leap, grapple or teleport.</p>
     <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend one at a time by clicking foes in reach (pick Crit or Hit in the panel, or leave it on Auto); unspent hits stay until you end your turn, so you can move and keep striking: each hit kills a minion or deals your damage per hit to an elite or boss (a crit multiplies it). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
     <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
@@ -885,7 +981,7 @@ function help(after) {
     <h3>Chasms</h3><p>A Slam can hurl you into a chasm: a fall costs 10% of your health and foes lose you. Climbing out is your action: d6 4+, with +1 for each failed try. Minions pushed into a chasm are gone; elites climb out hurt.</p>
     <h3>Waves and scenes</h3><p>Each scene comes from the Delvers' Ledger adventure planner: skirmishes, swarms, elite packs, gauntlets and bosses, sized to your gear when each act began. Reinforcements arrive at the end of later rounds. Clear every foe and the turns stop: walk freely, open the chests (gold beacons) and take the glowing spiral stair in the west wall; the buttons at the bottom walk you there. Between acts the Rakshasa buys your spare gear for Favour and sells boons and wares.</p>
     <h3>Foe abilities</h3>${foes}
-    <h3>Keys</h3><p><kbd>A</kbd> attack · <kbd>S</kbd> sprint · <kbd>1</kbd>–<kbd>9</kbd> powers · <kbd>E</kbd>/<kbd>Enter</kbd> end round · <kbd>Tab</kbd> next hero · <kbd>I</kbd> gear · <kbd>C</kbd> centre · arrows or drag to pan · wheel to zoom · <kbd>Esc</kbd>/right-click cancels.</p>
+    <h3>Keys</h3><p><kbd>A</kbd> attack · <kbd>S</kbd> sprint · <kbd>1</kbd>–<kbd>9</kbd> powers · <kbd>E</kbd>/<kbd>Enter</kbd> end round · <kbd>Tab</kbd> next hero · <kbd>I</kbd> gear (party gear for a party) · <kbd>C</kbd> centre · arrows or drag to pan · wheel to zoom · <kbd>Esc</kbd>/right-click cancels.</p>
     <h3>On a phone</h3><p>Tap a square or foe to select it: the path, any free blows and the foe's details show, with a button to confirm. Tap it again (or the button) to do it. Banked hits are spent with a single tap on a foe in reach. Drag to pan, pinch to zoom.</p>
     </div><div class="credits">Art: Kenney "Isometric Miniature Dungeon" (CC0) · Flare-format monster renders from OpenGameArt: orcs, spiders and werebear by johndh and Wciow (CC-BY-SA 3.0), slime and demon by ryan.dansie (CC0 / CC-BY-SA 3.0) · Rakshasa portrait from Delvers' Ledger · cliffs, effects, dice and cards drawn in code.</div>`, { onClose: after });
   p.querySelector('.close').onclick = closeModal;

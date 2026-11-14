@@ -182,3 +182,28 @@ test('Gravity Well can be aimed into a chasm and drags foes over the edge', () =
   assert.ok(G.foes[0].dead, 'the minion was dragged into the chasm');
   assert.ok(G.foes[1].hp < 3000 && G.foes[1].pinned, 'the elite fell, clawed out hurt and is pinned');
 });
+
+test('the armory moves and swaps gear between heroes and previews what changes', () => {
+  const rng = rngFrom(51), G = R.newRun([{ cls: 'ironclad' }, { cls: 'arcanist' }], rng);
+  R.startScene(G, rng);
+  const maul = { id: 'tf', name: 'Thunderforge Maul', base: 'Thunderforge Maul', slot: 'weapon', rarity: 'set', set: 'thunderforge', stats: { damage: 200 } };
+  const rod = { id: 'eh', name: 'Emberheart Rod', base: 'Emberheart Rod', slot: 'weapon', rarity: 'set', set: 'emberheart', stats: { damage: 150 } };
+  const wraps = { id: 'ew', name: 'Emberheart Wraps', base: 'Emberheart Wraps', slot: 'gloves', rarity: 'set', set: 'emberheart', stats: { damage: 50 } };
+  G.party[0].gear.weapon = maul;
+  G.party[1].gear.weapon = rod;
+  G.bag.push(wraps);
+  // previews: the wraps on the Ironclad would complete "Forge and Flame" (Thunderforge 1 + Emberheart 1)
+  const pv = R.previewPlace(G, 'ew', 0);
+  assert.equal(pv.length, 1);
+  assert.equal(pv[0].delta.damage, 50 + 120, 'the piece plus the synergy damage');
+  assert.ok(pv[0].gained.some(g => g.syn), 'a synergy would be gained');
+  // swapping the weapons between heroes
+  assert.ok(R.place(G, 'tf', 1).ok);
+  assert.equal(G.party[1].gear.weapon.id, 'tf');
+  assert.equal(G.party[0].gear.weapon.id, 'eh', 'the displaced item goes back to the giver');
+  // to the satchel and back
+  assert.ok(R.place(G, 'eh', -1).ok);
+  assert.ok(!G.party[0].gear.weapon && G.bag.some(i => i.id === 'eh'));
+  const sp = R.synergyProgress(G).find(s => s.key === 'forgeflame');
+  assert.ok(sp.pool.thunderforge >= 1 && sp.pool.emberheart >= 2);
+});

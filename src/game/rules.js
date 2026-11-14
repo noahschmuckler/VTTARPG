@@ -795,6 +795,70 @@ export function unequip(G, slot, who) {
   withHero(G, ch, () => clamp(G));
   return ok();
 }
+// ------------------------------------------------------------------ the armory: move gear around the party
+// Where an item is: { who: party index, or -1 for the satchel, slot }.
+export function locate(G, itemId) {
+  const i = G.bag.findIndex(it => it.id === itemId);
+  if (i >= 0) return { who: -1, slot: G.bag[i].slot, item: G.bag[i] };
+  for (let w = 0; w < G.party.length; w++) for (const [slot, it] of Object.entries(G.party[w].gear)) if (it?.id === itemId) return { who: w, slot, item: it };
+  return null;
+}
+// Move an item to hero `to` (swapping with whatever that hero wears in the slot, which goes back where the item came
+// from) or to the satchel (to = -1). Pure gear shuffle on cloned heroes when `dry` (for previews).
+function shuffle(party, bag, itemId, to) {
+  let from = -1, it = bag.find(x => x.id === itemId);
+  if (!it) for (let w = 0; w < party.length && !it; w++) for (const v of Object.values(party[w].gear)) if (v?.id === itemId) { it = v; from = w; }
+  if (!it || from === to) return false;
+  const slot = it.slot;
+  if (from >= 0) delete party[from].gear[slot]; else bag.splice(bag.indexOf(it), 1);
+  if (to < 0) { bag.push(it); return true; }
+  const old = party[to].gear[slot];
+  party[to].gear[slot] = it;
+  if (old) { if (from >= 0) party[from].gear[slot] = old; else bag.push(old); }
+  return true;
+}
+export function place(G, itemId, to) {
+  const before = G.party.map(h => new Set(unlockKeys(h)));
+  if (!shuffle(G.party, G.bag, itemId, to)) return err('Nothing to move');
+  G.party.forEach((h, i) => { withHero(G, h, () => { clamp(G); if (unlockKeys(h).some(k => !before[i].has(k))) announceUnlocks(G); }); });
+  return ok();
+}
+const STAT_KEYS = ['maxHp', 'armor', 'damage', 'dice', 'critMult', 'cleave', 'energyPerRound', 'energyPerKill', 'maxEnergy'];
+const powerName = k => { const [kind, id, n] = k.split(':'); return kind === 'syn' ? SYNERGIES.find(s => s.key === id).name : Number(n) === 1 ? SETS[id].power.name : `${SETS[id].name} ×${n}`; };
+// What moving item → hero `to` would change, for every hero it touches: stat deltas and set powers / synergies gained or lost.
+export function previewPlace(G, itemId, to) {
+  const party = G.party.map(h => ({ ...h, gear: { ...h.gear } })), bag = [...G.bag];
+  if (!shuffle(party, bag, itemId, to)) return [];
+  const out = [];
+  G.party.forEach((h, i) => {
+    const a = derive(h), b = derive(party[i]);
+    const delta = {};
+    for (const k of STAT_KEYS) { const d = Math.round(((b[k] || 0) - (a[k] || 0)) * 100) / 100; if (d) delta[k] = d; }
+    const ka = new Set(unlockKeys(h)), kb = new Set(unlockKeys(party[i]));
+    const gained = [...kb].filter(k => !ka.has(k)), lost = [...ka].filter(k => !kb.has(k));
+    const known = new Set(h.unlocked || []);
+    if (Object.keys(delta).length || gained.length || lost.length) out.push({
+      who: i, delta,
+      gained: gained.map(k => ({ key: k, syn: k.startsWith('syn:'), name: k.startsWith('syn:') && !known.has(k) ? 'a hidden synergy!' : powerName(k) })),
+      lost: lost.map(k => ({ key: k, syn: k.startsWith('syn:'), name: powerName(k) })),
+    });
+  });
+  return out;
+}
+// The party's progress toward each synergy: for each hero, how many of the needed pieces they wear.
+export function synergyProgress(G) {
+  return SYNERGIES.map(sy => {
+    const known = G.party.some(h => (h.unlocked || []).includes(`syn:${sy.key}`));
+    const heroes = G.party.map((h, i) => {
+      const c = setCounts(h);
+      const missing = Object.entries(sy.needs).reduce((t, [k, n]) => t + Math.max(0, n - (c[k] || 0)), 0);
+      return { who: i, missing, active: missing === 0 };
+    });
+    const pool = {}; // pieces of the needed sets anywhere in the party's hands or satchel
+    for (const k of Object.keys(sy.needs)) pool[k] = G.bag.filter(it => it.set === k).length + G.party.reduce((t, h) => t + (setCounts(h)[k] || 0), 0);
+    return { key: sy.key, name: sy.name, needs: sy.needs, known, text: known ? synergyText(sy) : '', heroes, pool };
+  });
+}
 export function discard(G, itemId) {
   const i = G.bag.findIndex(it => it.id === itemId);
   if (i < 0) return err('Not in the satchel');

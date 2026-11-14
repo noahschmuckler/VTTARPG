@@ -20,7 +20,7 @@ The game imports the tabletop engine unchanged (`src/ledger/` is a copy of `ttar
 
 | Ledger piece | In the video game |
 |---|---|
-| A party (`order`, `characters`) | Pick 1–4 callings. Each hero has their own move and action per round; switch by tapping them or with Next (Tab), then End round. Foes go for the nearest hero they can reach. A hero at 0 health is down until the scene is clear; the run ends only if everyone falls. Gear is shared through one satchel; Favour and wares are shared too. |
+| A party (`order`, `characters`) | Pick 1–4 callings. Each hero has their own move and action per round; switch by tapping them or with Next (Tab), then End round. Foes go for the nearest hero they can reach. A hero at 0 health is down until the scene is clear; the run ends only if everyone falls. Gear is shared through one satchel; Favour and wares are shared too. **Party gear** (🎒) shows every hero's gear side by side: pick an item to preview it on each hero (stats, set powers and synergies gained or lost) and move or swap it; a tracker shows how close each hero is to every synergy. |
 | Five callings (`CLASSES`) | Ironclad, Runepriest, Ranger, Arcanist, Shadowblade: same health, armor, dice, damage, move, reach and powers. |
 | Dice pool attacks | Roll d6s; every 4+ is a hit, 6s crit. Hits form a pool you spend one at a time by clicking foes in reach, choosing crit or plain hit (or Auto: crits to elites and bosses, hits to minions). |
 | One move + one action | Walk (blue squares), then Attack, a Power or Sprint. Attack powers prime the attack; move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) move you, then you attack in the same action. Rolled hits keep until you end your turn. Once a scene is clear, turns stop and you walk freely. |
