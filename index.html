@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Delvers' Descent</title>
+<meta name="description" content="A solo, isometric, turn-based tactics ARPG on the Delvers' Ledger rules.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud" hidden>
+  <div id="topbar">
+    <div id="where"><div id="sceneName"></div><div id="sceneSub"></div></div>
+    <div id="topBtns">
+      <button id="btnSpeed" title="Animation speed">1×</button>
+      <button id="btnCenter" title="Centre on hero (C)">◎</button>
+      <button id="btnInv" title="Inventory (I)">🎒 Gear</button>
+      <button id="btnHelp" title="How to play (H)">?</button>
+      <button id="btnMenu" title="Menu">☰</button>
+    </div>
+  </div>
+  <div id="log"></div>
+  <div id="tip" hidden></div>
+  <div id="cursorNote" hidden></div>
+  <div id="banner" hidden></div>
+  <div id="dice" hidden></div>
+  <div id="toasts"></div>
+  <div id="strike" hidden></div>
+  <div id="targeting" hidden></div>
+  <div id="bar">
+    <div class="orb hp" id="orbHp"><div class="fill"></div><div class="ward"></div><span></span><label>Health</label></div>
+    <div id="mid">
+      <div id="turnInfo"></div>
+      <div id="actions"></div>
+      <div id="powers"></div>
+      <div id="wares"></div>
+    </div>
+    <div class="orb en" id="orbEn"><div class="fill"></div><span></span><label>Energy</label></div>
+  </div>
+</div>
+
+<div id="modal" hidden><div class="panel"></div></div>
+<div id="loading"><div class="title">Delvers' Descent</div><div class="bar"><i></i></div><div class="sub">Loading the deep halls…</div></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

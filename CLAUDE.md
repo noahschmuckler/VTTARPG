@@ -1,0 +1,9 @@
+# Delvers' Descent: notes for Claude
+
+- `src/ledger/` is a verbatim copy of `ttarpg/public/{engine,sets,adventure,merchant,art}.js`. Don't edit it here;
+  change the rules in ttarpg and copy them over. Solo-only rules live in `src/game/rules.js` (`SOLO`, `SPECS`).
+- `src/game/rules.js` is pure: no DOM. Everything visible goes through `G.fx`; `src/main.js` plays it via `View.play`.
+- When a mechanic changes, update the in-game help (`help()` in `src/main.js`) and the table in `README.md`.
+- Sprites: rebuild with `python3 -I tools/build_assets.py <kenney pack dir> <flare sheets dir> assets`
+  (downloads listed in CREDITS.md). Each unit sheet's `base` maps canonical directions to rows.
+- Checks: `npm test`, `npm run sim` for balance, and drive the UI with Playwright against `npm start` (port 8790).

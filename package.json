@@ -1,0 +1,15 @@
+{
+  "name": "delvers-descent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A solo, isometric, turn-based tactics ARPG built on the Delvers' Ledger rules.",
+  "scripts": {
+    "start": "node tools/serve.js",
+    "test": "node --test test/*.test.js",
+    "sim": "node tools/sim.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
