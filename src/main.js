@@ -529,7 +529,7 @@ function bindInput() {
       if (dragging || Math.hypot(dx, dy) > 7) { dragging = true; view.pan(dx, dy); down.x = e.clientX; down.y = e.clientY; cv.style.cursor = 'grabbing'; }
     }
     if (!G?.map) return;
-    const t = view.pick(e.clientX, e.clientY);
+    const t = view.pick(e.clientX, e.clientY, { bodies: !aimingAtSquare() });
     if ((t?.x !== hover?.x || t?.y !== hover?.y)) { hover = t; updateHighlights(); }
     else updateHighlights();
     showTip(e.clientX, e.clientY);
@@ -540,7 +540,7 @@ function bindInput() {
     const was = down; down = null;
     if (!was || dragging) return;
     if (was.b === 2) { cancelMode(); return; }
-    const t = view.pick(e.clientX, e.clientY);
+    const t = view.pick(e.clientX, e.clientY, { bodies: !aimingAtSquare() });
     if (!was.touch) { if (t) clickTile(t); return; }
     // touch: spending banked hits on a foe in reach is instant; anything else is select, then confirm
     const f = t && R.foeAt(G, t.x, t.y);
@@ -573,6 +573,8 @@ function bindInput() {
   $('#btnMenu').onclick = () => menu();
   $('#modal').addEventListener('pointerdown', e => { if (e.target.id === 'modal' && $('#modal .close')) closeModal(); });
 }
+// Square-targeted powers (leap, blink, meteor…) pick the square under the finger, never a unit standing in front of it.
+function aimingAtSquare() { return mode.kind === 'power' && ['tile', 'point', 'walk'].includes(R.powerSpec(G, mode.p).mode); }
 function cancelMode() { if (mode.kind !== 'idle') { mode = { kind: 'idle' }; refresh(); } }
 async function endTurn() {
   if (busy || !G || G.stage !== 'scene') return;

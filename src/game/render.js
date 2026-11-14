@@ -76,7 +76,7 @@ export class View {
     return { x: (px * this.dpr - this.c.width / 2) / z + this.cam.x, y: (py * this.dpr - this.c.height / 2) / z + this.cam.y };
   }
   // Which square is under the pointer (front squares win, raised tops included)?
-  pick(px, py) {
+  pick(px, py, { bodies = true } = {}) {
     const G = this.G; if (!G?.map) return null;
     const w = this.toWorld(px, py);
     const m = G.map;
@@ -87,8 +87,8 @@ export class View {
       const dx = Math.abs(w.x - c.x) / HW, dy = Math.abs(w.y - c.y) / HH;
       if (dx + dy <= 1 && (!best || x + y > best.x + best.y)) best = { x, y };
     }
-    // also allow clicking a unit's body
-    for (const d of this.disp.values()) {
+    // also allow clicking a unit's body (not when aiming at a square)
+    if (bodies) for (const d of this.disp.values()) {
       if (d.alpha < 0.3) continue;
       const c = this.iso(d.x, d.y, d.e);
       if (Math.abs(w.x - c.x) < 22 && w.y < c.y + 10 && w.y > c.y - 70) {
