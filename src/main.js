@@ -426,7 +426,7 @@ function refresh(light = false) {
     b.title = `${C.name}: ${C.text} (free; one ware per hero per turn; the party shares the pouch)`;
     b.disabled = busy || G.turn.ware || G.stage !== 'scene';
     if (mode.kind === 'ware' && mode.w.key === w.key) b.classList.add('active');
-    b.onclick = () => { if (mode.kind === 'ware' && mode.w.id === w.id) return cancelMode(); mode = { kind: 'ware', w }; refresh(); };
+    b.onclick = () => { if (mode.kind === 'ware' && mode.w.id === w.id) return cancelMode(); mode = { kind: 'ware', w, opened: performance.now() }; refresh(); };
     wa.appendChild(b);
   }
   // strike pool
@@ -451,13 +451,13 @@ function refresh(light = false) {
     tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(mode.p.name)} <span class="dim" style="font:12px var(--sans)">${mode.p.cost} energy</span></b><span class="desc">${esc(R.powerText(mode.p))}${why ? `<br><span style="color:var(--bad)">${esc(why)}</span>` : howTo ? `<br><span style="color:var(--brass2)">▸ ${esc(howTo)}</span>` : ''}</span>${spec.mode === 'foes' ? `<button class="primary" id="tgGo" ${mode.picked.length ? '' : 'disabled'}>Confirm (${mode.picked.length})</button>` : ''}${spec.mode === 'self' ? `<button class="primary" id="tgGo" ${usable ? '' : 'disabled'}>Use ${esc(mode.p.name)}</button>` : ''}<button id="tgX">Cancel <kbd>Esc</kbd></button>`;
     tg.querySelector('#tgX').onclick = cancelMode;
     const go = tg.querySelector('#tgGo');
-    if (go) go.onclick = () => firePower(spec.mode === 'foes' ? { ids: mode.picked } : null);
+    if (go) go.onclick = () => { if (performance.now() - (mode.opened || 0) < 450) return; firePower(spec.mode === 'foes' ? { ids: mode.picked } : null); }; // ignore a stray double tap
   } else if (mode.kind === 'ware') {
     const C = R.CONSUMABLES[mode.w.key];
     tg.hidden = false;
     tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(C.name)} <span class="dim" style="font:12px var(--sans)">ware · free</span></b><span class="desc">${esc(C.text)} Using a ware doesn't take your action; one per turn.</span><button class="primary" id="tgGo" ${G.turn.ware ? 'disabled' : ''}>Use ${esc(C.name)}</button><button id="tgX">Cancel <kbd>Esc</kbd></button>`;
     tg.querySelector('#tgX').onclick = cancelMode;
-    tg.querySelector('#tgGo').onclick = () => { const w = mode.w; mode = { kind: 'idle' }; act(() => R.useWare(G, w.id, rng)); };
+    tg.querySelector('#tgGo').onclick = () => { if (performance.now() - (mode.opened || 0) < 450) return; const w = mode.w; mode = { kind: 'idle' }; act(() => R.useWare(G, w.id, rng)); };
   } else tg.hidden = true;
   updateHighlights();
   // keep the camera's "centre" in the strip of map the HUD leaves visible
@@ -548,7 +548,8 @@ function intentFor(t) {
   if (!t || busy || G.stage !== 'scene') return null;
   if (mode.kind === 'power') {
     const spec = R.powerSpec(G, mode.p), valid = R.powerTargets(G, mode.p);
-    if (spec.mode === 'self' || !R.powerUsable(G, mode.p)) return null;
+    if (!R.powerUsable(G, mode.p)) return null;
+    if (spec.mode === 'self') return spec.radius && dist(t, G.pos) <= spec.radius ? `Use ${mode.p.name}` : null; // a tap in the shown area asks first
     const f = R.foeAt(G, t.x, t.y), ally = R.heroAt(G, t.x, t.y);
     if (spec.mode === 'foe' || spec.mode === 'foes') {
       if (f && valid.some(c => c.id === f.id)) return `${mode.p.name}: ${f.name}`;
@@ -742,12 +743,13 @@ function startPower(p) {
   if (busy || !G) return;
   if (mode.kind === 'power' && mode.p.key === p.key) return cancelMode();
   const spec = R.powerSpec(G, p);
-  mode = { kind: 'power', p, picked: [] };
+  mode = { kind: 'power', p, picked: [], opened: performance.now() };
   refresh();
 }
 async function clickPower(t) {
   const p = mode.p, spec = R.powerSpec(G, p);
-  if (spec.mode === 'self' || !R.powerUsable(G, p)) return; // self powers fire only from the Use button
+  if (!R.powerUsable(G, p)) return;
+  if (spec.mode === 'self') { if (spec.radius && dist(t, G.pos) <= spec.radius) return firePower(null); return; } // a deliberate click in the area (touch confirms first)
   const valid = R.powerTargets(G, p);
   if (spec.mode === 'foe' || spec.mode === 'foes') {
     const ally = R.heroAt(G, t.x, t.y);

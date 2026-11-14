@@ -373,3 +373,9 @@ kbd { font: 11px var(--sans); padding: 0 4px; border: 1px solid var(--edge); bor
   .forum .fhead h2 { font-size: 20px; }
   .forum button { min-height: 40px; }
 }
+
+@media (max-width: 700px) {
+  /* power and ware panels sit right on the bottom bar, off the middle of the map where you tap to aim */
+  #targeting { bottom: calc(var(--dock, 180px) + 4px); max-height: 34vh; overflow: auto; }
+  #targeting .desc { font-size: 12.5px; }
+}
