@@ -11,6 +11,7 @@
 // FORUM_URL overrides the site (default: the live Worker; http://localhost:8790 with FORUM_ADMIN_KEY for local tests).
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 const SITE = process.env.FORUM_URL || 'https://delvers-descent.noah-schmuckler.workers.dev';
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || 'a05002437e81e8e703e76f628668b8e7';
@@ -30,12 +31,12 @@ const when = t => new Date(t).toISOString().slice(0, 16).replace('T', ' ');
 
 if (cmd === 'key') {
   const k = randomBytes(24).toString('base64url');
-  // the API token is supplied by the environment (in Claude's sessions, the proxy injects it)
-  const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/workers/scripts/${SCRIPT}/secrets`, {
-    method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN || 'injected'}` },
-    body: JSON.stringify({ name: 'ADMIN_KEY', text: k, type: 'secret_text' }),
-  });
-  const j = await r.json();
+  // curl, not fetch: it honours HTTPS_PROXY (in Claude's sessions the proxy adds the Cloudflare credentials);
+  // elsewhere set CLOUDFLARE_API_TOKEN
+  const out = execFileSync('curl', ['-s', '-X', 'PUT', `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/workers/scripts/${SCRIPT}/secrets`,
+    '-H', 'content-type: application/json', ...(process.env.CLOUDFLARE_API_TOKEN ? ['-H', `authorization: Bearer ${process.env.CLOUDFLARE_API_TOKEN}`] : []),
+    '--data', JSON.stringify({ name: 'ADMIN_KEY', text: k, type: 'secret_text' })]).toString();
+  const j = JSON.parse(out || '{}');
   if (!j.success) { console.error('Could not set the secret:', JSON.stringify(j.errors)); process.exit(1); }
   writeFileSync(KEYFILE, k + '\n');
   console.log('New admin key set on the Worker and saved to .forum-key. (Any earlier key no longer works.)');
