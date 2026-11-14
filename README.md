@@ -7,7 +7,11 @@ A solo, isometric (3/4 view), turn-based tactics ARPG built on the **Delvers' Le
 npm start      # http://localhost:8790  (any static server works; there is no build step)
 npm test       # rules tests, including a bot that clears Act I with every calling
 npm run sim    # balance sim: the bot plays the whole campaign with each calling
+npm run deploy # Cloudflare Worker: https://delvers-descent.noah-schmuckler.workers.dev
 ```
+
+Deploying: `tools/stage.js` copies the game into `dist/` and writes a small Worker that serves every file, bundled
+into the script as binary modules (about 1.9 MB gzipped, under the free plan's 3 MB). Run `npx wrangler login` once.
 
 ## What carries over from the Ledger
 

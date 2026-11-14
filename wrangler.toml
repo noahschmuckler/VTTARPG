@@ -1,0 +1,11 @@
+name = "delvers-descent"
+main = "dist/worker.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+# `npm run deploy` runs tools/stage.js first: it copies the game into dist/site and writes a Worker that
+# serves every file, bundled in as a binary module.
+[[rules]]
+type = "Data"
+globs = ["**/*.bin"]
+fallthrough = false

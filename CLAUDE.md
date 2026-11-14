@@ -7,3 +7,5 @@
 - Sprites: rebuild with `python3 -I tools/build_assets.py <kenney pack dir> <flare sheets dir> assets`
   (downloads listed in CREDITS.md). Each unit sheet's `base` maps canonical directions to rows.
 - Checks: `npm test`, `npm run sim` for balance, and drive the UI with Playwright against `npm start` (port 8790).
+- Deploy: `npm run deploy` (stages dist/ via tools/stage.js, then wrangler). Live: https://delvers-descent.noah-schmuckler.workers.dev
+  Keep the bundle under 3 MB gzipped (free Workers limit).
