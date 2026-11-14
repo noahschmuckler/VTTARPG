@@ -285,7 +285,10 @@ function refresh(light = false) {
   $('#orbEn').style.setProperty('--pct', `${(h.energy / s.maxEnergy) * 100}%`);
   $('#orbHp .fill').style.height = `${(h.hp / s.maxHp) * 100}%`;
   $('#orbHp span').textContent = `${fmt(h.hp)}\n/ ${fmt(s.maxHp)}`;
-  $('#orbHp .ward').style.boxShadow = h.ward > 0 ? `inset 0 0 0 ${Math.min(10, 3 + h.ward / 150)}px var(--brass2)` : 'none';
+  $('#orbHp .ward').style.boxShadow = h.ward > 0 ? `inset 0 0 0 ${Math.min(innerWidth < 700 ? 3 : 10, 3 + h.ward / 150)}px var(--brass2)` : 'none';
+  const wn = $('#wardNum');
+  wn.hidden = !(h.ward > 0);
+  wn.textContent = `🛡 ${fmt(h.ward || 0)} ward`;
   $('#orbHp').title = `Health ${fmt(h.hp)} / ${fmt(s.maxHp)}${h.ward ? ` · Ward ${fmt(h.ward)}` : ''} · Armor ${s.armor}%`;
   $('#orbEn .fill').style.height = `${(h.energy / s.maxEnergy) * 100}%`;
   $('#orbEn span').textContent = `${h.energy}\n/ ${s.maxEnergy}`;

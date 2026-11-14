@@ -220,3 +220,10 @@ kbd { font: 11px var(--sans); padding: 0 4px; border: 1px solid var(--edge); bor
   #targeting kbd { display: none; }
   #targeting span { flex: 1 1 100%; }
 }
+
+/* ward amount next to health */
+#wardNum { position: absolute; left: 0; width: 104px; bottom: 112px; text-align: center; font: 700 13px var(--sans); color: #1a1408;
+  background: linear-gradient(#f8e7a8, #c9a24d); border: 1px solid #fff4c8; border-radius: 10px; padding: 2px 6px; box-shadow: 0 2px 8px #000a; white-space: nowrap; pointer-events: none; }
+@media (max-width: 900px) { #wardNum { width: 74px; font-size: 11px; bottom: 82px; } }
+@media (max-width: 700px) { #wardNum { width: auto; left: 12px; bottom: auto; top: -11px; font-size: 11px; padding: 0 8px; line-height: 18px; }
+  .orb .ward { border-radius: 12px; } }

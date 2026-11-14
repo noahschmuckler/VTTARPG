@@ -458,8 +458,8 @@ export class View {
     }
     if (isHero) {
       const s = this.G.hero;
-      const badges = [G.hidden && '👁', G.pit && '🕳', s.ward > 0 && '🛡'].filter(Boolean).join(' ');
-      if (badges) { g.font = '13px sans-serif'; g.textAlign = 'center'; g.fillText(badges, c.x, top); }
+      const badges = [G.hidden && '👁', G.pit && '🕳', s.ward > 0 && `🛡${fmt(s.ward)}`].filter(Boolean).join(' ');
+      if (badges) { g.font = '700 13px sans-serif'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(badges, c.x, top); g.fillStyle = '#f3d98e'; g.fillText(badges, c.x, top); }
     }
   }
   drawVfx(v) {
