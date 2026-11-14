@@ -21,7 +21,7 @@ The game imports the tabletop engine unchanged (`src/ledger/` is a copy of `ttar
 |---|---|
 | Five callings (`CLASSES`) | Ironclad, Runepriest, Ranger, Arcanist, Shadowblade: same health, armor, dice, damage, move, reach and powers. |
 | Dice pool attacks | Roll d6s; every 4+ is a hit, 6s crit. Hits form a pool you spend by clicking foes in reach: a minion dies to one, a big foe takes the rest (crits first). |
-| One move + one action | Walk (blue squares), then Attack, a Power or Sprint. Attack powers prime the attack. |
+| One move + one action | Walk (blue squares), then Attack, a Power or Sprint. Attack powers prime the attack; move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) move you, then you attack in the same action. Rolled hits keep until you end your turn. Once a scene is clear, turns stop and you walk freely. |
 | Height, flanking, hiding | High ground and attacking from hiding add dice; foes get an extra die when you're surrounded or they stand above you. |
 | Breaking away | Walking out of a foe's reach gives it a free blow; the path preview turns red. |
 | Positional powers | Done for real on the grid: leap, grapple, blink, swap, push into walls (slammed, +1 hit) or chasms, pull, pin, gravity well, meteor, warding circle, vanish. |
@@ -36,7 +36,7 @@ apply to the hero, minion counts are boosted for a grid, big foes hit a little s
 
 ## Controls
 
-Click a blue square to move, a red-ringed foe to attack, a chest to open it, the glowing stair to descend.
+On a phone, tap once to select (path, free blows and foe details show) and tap again or press the button to confirm; pinch to zoom. With a mouse, click a blue square to move, a red-ringed foe to attack, a chest to open it, the glowing stair to descend.
 Keys: `A` attack, `S` sprint, `1`–`9` powers, `E`/`Enter` end turn, `I` gear, `C` centre, arrows/drag to pan,
 wheel to zoom, `Esc`/right-click to cancel. The run saves to the browser after every action.
 

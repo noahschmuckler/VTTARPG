@@ -93,7 +93,8 @@ export const foesInReach = G => living(G).filter(f => inReach(G, G.pos, f, heroR
 
 export function heroMoves(G) {
   if (G.pit || G.hero.hp <= 0 || G.stage !== 'scene') return new Map();
-  return reachable(G.map, G.pos, G.turn.move, (x, y) => occupied(G, x, y, 'hero'));
+  // once the scene is clear there are no turns: walk anywhere
+  return reachable(G.map, G.pos, G.cleared ? 999 : G.turn.move, (x, y) => occupied(G, x, y, 'hero'));
 }
 // Foes that would get a free blow if the hero walked this path (leaving their side).
 export function freeBlowsOn(G, path) {
@@ -257,7 +258,7 @@ export function moveHero(G, x, y, rng) {
   const nodes = heroMoves(G), n = nodes.get(key(x, y));
   if (!n || n.cost === 0) return err('Out of reach');
   const path = pathTo(nodes, x, y);
-  G.turn.move -= n.cost;
+  if (!G.cleared) G.turn.move -= n.cost;
   // walk it one square at a time so free blows land where they happen
   for (let i = 1; i < path.length; i++) {
     const from = path[i - 1], to = path[i];
@@ -343,19 +344,19 @@ export function spend(G, foeId, rng) {
 // ------------------------------------------------------------------ hero: powers
 // How each power targets on the grid. Solo adaptations of the table rules are noted.
 const SPECS = {
-  leap: { mode: 'tile', range: 4, up: 3, text: 'Pick a square within 4 (up to 3 levels higher).' },
+  leap: { mode: 'tile', range: 4, up: 3, strike: true, text: 'Pick a square within 4 (up to 3 levels higher), then attack.' },
   quake: { mode: 'self', radius: 2, text: 'Foes within 2 take a hit and are hurled 3 squares away.' },
   bulwark: { mode: 'self', radius: 3, text: 'Ward yourself; foes within 3 are dragged to your side.' },
   recall: { mode: 'foe', range: 10, sight: false, text: 'Solo: swap places with any foe within 10.' },
   circle: { mode: 'self', radius: 2, text: 'Ward and heal; foes can\'t step inside the circle this round.' },
   hammer: { mode: 'foe', range: 6, sight: true, text: 'Pick a foe within 6 in sight.' },
-  grapple: { mode: 'tile', range: 8, sight: true, higher: true, text: 'Pick a higher square within 8 in sight.' },
+  grapple: { mode: 'tile', range: 8, sight: true, higher: true, strike: true, text: 'Pick a higher square within 8 in sight, then attack.' },
   vanish: { mode: 'walk', range: 4, text: 'Pick a square up to 4 moves away; you vanish there.' },
   pin: { mode: 'foes', range: 12, sight: true, max: 2, text: 'Pick up to 2 foes within 12 in sight, then confirm.' },
   blink: { mode: 'tile', range: 6, any: true, text: 'Pick any square within 6, at any height.' },
   well: { mode: 'point', range: 8, sight: true, radius: 3, text: 'Pick a point within 8 in sight.' },
   meteor: { mode: 'point', range: 10, radius: 2, text: 'Pick a point within 10.' },
-  step: { mode: 'foe', range: 6, sight: false, text: 'Pick a foe within 6: you appear behind it.' },
+  step: { mode: 'foe', range: 6, sight: false, strike: true, text: 'Pick a foe within 6: you appear behind it, then attack.' },
   smoke: { mode: 'self', text: 'Vanish into smoke.' },
 };
 export function powerSpec(G, p) {
@@ -408,7 +409,9 @@ export function usePower(G, keyName, target, rng) {
     if (!foes.length) return err('Pick a foe in range');
   }
   G.hero.energy -= p.cost;
-  G.turn.acted = p.attack ? 'attackPower' : 'power';
+  // attack powers and move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) leave the attack open
+  const strikes = p.attack || !!S.strike;
+  G.turn.acted = strikes ? 'attackPower' : 'power';
   fx(G, { t: 'power', name: p.name, set: p.set || null, cls: G.hero.cls });
   fx(G, { t: 'anim', id: 'hero', a: 'act' });
   log(G, `${G.hero.name} uses ${p.name}.`, 'ability');
@@ -503,7 +506,7 @@ export function usePower(G, keyName, target, rng) {
     else if (f.kind === 'hide') { G.hidden = { until: G.round + 1 }; fx(G, { t: 'hide' }); log(G, `${G.hero.name} is hidden.`, 'ability'); }
   }
   checkCleared(G);
-  return ok({ attack: p.attack });
+  return ok({ attack: strikes });
 }
 function pinFoe(G, f) {
   if (f.dead) return;

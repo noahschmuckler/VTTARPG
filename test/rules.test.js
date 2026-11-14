@@ -109,3 +109,25 @@ test('the bot can clear the opening act with every class (two retries, like a pl
   const wins = Object.values(results).filter(o => o.at(-1) === 'clear').length;
   assert.ok(wins >= 4, `only ${wins} classes cleared Act I: ${JSON.stringify(results)}`);
 });
+
+test('Leaping Strike leaves the attack open; hits survive moving; a cleared scene allows free walking', () => {
+  const rng = rngFrom(9), G = R.newRun('Bo', 'ironclad', rng);
+  R.startScene(G, rng);
+  G.hero.energy = 100;
+  const leap = R.powerList(G).find(p => p.key === 'leap');
+  const spot = R.powerTargets(G, leap)[0];
+  assert.ok(R.usePower(G, 'leap', spot, rng).ok);
+  assert.ok(R.canAttack(G), 'can still attack after leaping');
+  assert.ok(!R.canAct(G), 'but not take another action');
+  G.strike = { hits: 2, crits: 0, minion: 0, mult: 1 };
+  const step = [...R.heroMoves(G).values()].find(n => n.cost === 1);
+  R.moveHero(G, step.x, step.y, rng);
+  assert.equal(R.strikeLeft(G), 2, 'hits kept while moving');
+  R.endTurn(G, rng);
+  assert.equal(R.strikeLeft(G), 0, 'hits gone at end of turn');
+  for (const f of G.foes) f.dead = true;
+  G.waves = []; G.turn.move = 0;
+  R.useWare(G, G.hero.consumables[0].id, rng); // any action re-checks the scene
+  assert.ok(G.cleared);
+  assert.ok(R.heroMoves(G).size > 20, 'free movement once clear');
+});

@@ -16,6 +16,8 @@ const rarityColor = it => (it.set ? R.SETS[it.set].color : RC[it.rarity] || 'var
 
 let G = null, rng = rngFrom(Date.now() & 0xffffffff), view, busy = false, mode = { kind: 'idle' }, speed = 1, hover = null;
 let pendingLoot = [], lastSave = 0;
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+if (TOUCH) document.documentElement.classList.add('touch');
 
 // ================================================================== boot
 async function boot() {
@@ -189,6 +191,7 @@ function victory() {
 // ================================================================== acting
 async function act(fn, { quiet = false } = {}) {
   if (busy || !G) return;
+  if (sel) clearSel();
   busy = true;
   const r = fn();
   if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; refresh(); return r; }
@@ -214,7 +217,13 @@ async function playFx() {
       case 'loot': pendingLoot.push(e); break;
       case 'phase': if (e.name === 'Enemy phase') { if (R.living(G).length) await banner('Enemy phase'); } else await banner(e.name, e.energy ? `+${e.energy} energy` : ''); break;
       case 'power': await banner(e.name, '', 0.8); break;
-      case 'cleared': await banner('Scene clear', 'The stair down glows in the west wall'); toast('Scene clear', `You catch your breath (+${Math.round(R.SOLO.breather * 100)}% health). Open the chests, then take the spiral stair.`); break;
+      case 'cleared': {
+        await banner('Scene clear', 'Walk freely: no more turns');
+        toast('Scene clear', `You catch your breath (+${Math.round(R.SOLO.breather * 100)}% health). Gold beacons mark the chests; the spiral stair glows in the west wall. Use the buttons below to go straight there.`, '', 7000);
+        const c = G.map.chests.find(q => !q.opened);
+        if (c) view.centerOn(c);
+        break;
+      }
       default: await view.play(e);
     }
     refresh(true);
@@ -272,6 +281,8 @@ function refresh(light = false) {
   if (!G || !G.map) return;
   const s = R.heroStats(G), h = G.hero;
   // orbs
+  $('#orbHp').style.setProperty('--pct', `${(h.hp / s.maxHp) * 100}%`);
+  $('#orbEn').style.setProperty('--pct', `${(h.energy / s.maxEnergy) * 100}%`);
   $('#orbHp .fill').style.height = `${(h.hp / s.maxHp) * 100}%`;
   $('#orbHp span').textContent = `${fmt(h.hp)}\n/ ${fmt(s.maxHp)}`;
   $('#orbHp .ward').style.boxShadow = h.ward > 0 ? `inset 0 0 0 ${Math.min(10, 3 + h.ward / 150)}px var(--brass2)` : 'none';
@@ -284,11 +295,12 @@ function refresh(light = false) {
   $('#sceneName').textContent = `${sc?.name || ''}`;
   const left = R.living(G).length, waves = G.waves.length;
   const next = G.waves[0] ? Math.max(0, G.waves[0].due - G.round + 1) : 0;
-  $('#sceneSub').textContent = `${G.adv.acts[G.act]?.name || ''} · Round ${G.round} · ${G.cleared ? 'Clear: take the stair (west wall)' : `${left} foe${left === 1 ? '' : 's'}${waves ? ` · reinforcements in ${next} round${next === 1 ? '' : 's'}` : ''}`}`;
+  const unopened = G.map.chests.filter(c => !c.opened).length;
+  $('#sceneSub').textContent = `${TOUCH ? '' : (G.adv.acts[G.act]?.name || '') + ' · '}Round ${G.round} · ${G.cleared ? `Clear${unopened ? ` · ${unopened} chest${unopened > 1 ? 's' : ''} (gold beacons)` : ''}${TOUCH ? '' : ' · stair glows in the west wall'}` : `${left} foe${left === 1 ? '' : 's'}${waves ? ` · reinforcements in ${next} round${next === 1 ? '' : 's'}` : ''}`}`;
   if (light) return;
   // turn info
   const t = G.turn, acted = t.acted;
-  $('#turnInfo').innerHTML = G.pit
+  $('#turnInfo').innerHTML = G.cleared ? '<span><b>Scene clear</b>: walk anywhere, open chests, then descend</span>' : G.pit
     ? `<span>🕳 <b>In the chasm</b>: climbing out is your action (d6 4+, +${G.pit.tries} from failed tries)</span>`
     : `<span>Move <b>${t.move}</b></span><span>Action <b>${!acted ? 'ready' : acted === 'attackPower' ? 'attack primed' : 'used'}</b></span><span>Dice <b>${R.attackPool(G).total}</b>${h.buffs?.bonusDice ? ` <span style="color:var(--good)">(+${h.buffs.bonusDice})</span>` : ''}${h.buffs?.damageMult > 1 ? ` <span style="color:var(--rare)">×${h.buffs.damageMult} dmg</span>` : ''}</span><span>Reach <b>${R.heroReach(G) === 1 ? 'melee' : R.heroReach(G)}</b></span>${G.hidden ? '<span style="color:#b88cff">Hidden (+3 dice)</span>' : ''}`;
   // actions
@@ -297,19 +309,24 @@ function refresh(light = false) {
   const acts = $('#actions');
   acts.innerHTML = '';
   const btn = (label, title, on, fn, cls = '') => { const b = document.createElement('button'); b.innerHTML = label; b.title = title; b.disabled = busyOr(on); b.className = cls; b.onclick = fn; acts.appendChild(b); return b; };
-  if (G.pit) btn('🧗 Climb out', 'Roll a d6: 4+ climbs out (each failed try adds +1)', !G.turn.acted && G.stage === 'scene', () => act(() => R.climb(G, rng)));
+  if (G.cleared) {
+    const chests = G.map.chests.filter(c => !c.opened);
+    if (chests.length) btn(`✦ Open chest${chests.length > 1 ? ` (${chests.length})` : ''}`, 'Walk to the nearest unopened chest and open it', true, () => { const c = chests.sort((a, b) => dist(a, G.pos) - dist(b, G.pos))[0]; view.centerOn(c); walkThen(c, () => R.openChest(G, c.x, c.y, rng)); }, 'primary');
+    btn('⇣ Descend', 'Walk to the glowing spiral stair and take it', true, () => { view.centerOn(G.map.exit); walkThen(G.map.exit, () => R.takeExit(G), 0); }, chests.length ? '' : 'primary');
+  } else if (G.pit) btn('🧗 Climb out', 'Roll a d6: 4+ climbs out (each failed try adds +1)', !G.turn.acted && G.stage === 'scene', () => act(() => R.climb(G, rng)));
   else {
-    btn(`⚔ Attack <small>${R.attackPool(G).total}d6</small>`, inReach ? 'Roll your dice pool; every 4+ is a hit you can spend on foes in reach (A). Or just click a foe in reach.' : 'No foe in reach', R.canAttack(G) && inReach && !R.strikeLeft(G), () => act(() => R.attack(G, rng)));
+    btn(`⚔ ${G.turn.acted === 'attackPower' ? 'Strike' : 'Attack'} <small>${R.attackPool(G).total}d6</small>`, inReach ? 'Roll your dice pool; every 4+ is a hit you can spend on foes in reach (A). Or just click a foe in reach.' : 'No foe in reach', R.canAttack(G) && inReach && !R.strikeLeft(G), () => act(() => R.attack(G, rng)));
     btn('» Sprint', `Your action: +${s.move} move (S)`, R.canAct(G), () => act(() => R.sprint(G)));
   }
-  btn('End turn ⏎', 'Foes act, then a new round (E)', G.stage === 'scene', () => endTurn(), 'end');
+  if (!G.cleared) btn('End turn ⏎', 'Foes act, then a new round (E)', G.stage === 'scene', () => endTurn(), 'end');
+  document.documentElement.style.setProperty('--dock', $('#bar').offsetHeight + 'px');
   // powers
   const pw = $('#powers');
   pw.innerHTML = '';
-  R.powerList(G).forEach((p, i) => {
+  if (!G.cleared) R.powerList(G).forEach((p, i) => {
     const b = document.createElement('button');
     const spec = R.powerSpec(G, p);
-    b.innerHTML = `${esc(p.name)}<small>${p.cost} energy${p.attack ? ' · attack' : ''}</small>`;
+    b.innerHTML = `${esc(p.name)}<small>${p.cost} energy${p.attack ? ' · attack' : spec.strike ? ' · + strike' : ''}</small>`;
     b.title = `${p.name} (${i + 1}) · ${p.cost} energy\n${p.text}${spec.text && spec.text !== p.text ? `\n▸ ${spec.text}` : ''}${p.boosted?.length ? `\nBoosted by: ${p.boosted.join(', ')}` : ''}`;
     b.disabled = busyOr(R.powerUsable(G, p));
     if (p.set) { b.classList.add('set'); b.style.setProperty('--setc', R.SETS[p.set].color); }
@@ -334,8 +351,7 @@ function refresh(light = false) {
   if (G.strike && R.strikeLeft(G)) {
     const S = G.strike;
     st.hidden = false;
-    st.innerHTML = `<span>Hits to spend:</span><span class="n">${S.hits}</span><span>hit${S.hits === 1 ? '' : 's'}</span>${S.crits ? `<span class="n" style="color:var(--legendary)">${S.crits}</span><span>crit${S.crits === 1 ? '' : 's'}</span>` : ''}${S.minion ? `<span class="n" style="color:var(--good)">${S.minion}</span><span>minion-only</span>` : ''}<span class="dim">Click foes in reach (red rings). Big foes take every hit; minions take one.</span><button id="stDone">Done</button>`;
-    st.querySelector('#stDone').onclick = () => { G.strike = null; refresh(); };
+    st.innerHTML = `<span>Hits to spend:</span><span class="n">${S.hits}</span><span>hit${S.hits === 1 ? '' : 's'}</span>${S.crits ? `<span class="n" style="color:var(--legendary)">${S.crits}</span><span>crit${S.crits === 1 ? '' : 's'}</span>` : ''}${S.minion ? `<span class="n" style="color:var(--good)">${S.minion}</span><span>minion-only</span>` : ''}<span class="dim">${TOUCH ? 'Tap a red-ringed foe. Hits keep until End turn: you can move first.' : 'Click foes in reach (red rings). Big foes take every hit, minions one. Unspent hits last until you end your turn, so you can move and keep striking.'}</span>`;
   } else st.hidden = true;
   // targeting bar
   const tg = $('#targeting');
@@ -387,10 +403,7 @@ function areaKeys(c, r) {
 }
 let noteText = '', noteCls = '';
 function note(text, cls = '') { noteText = text; noteCls = cls; }
-function showTip(px, py) {
-  const tip = $('#tip'), cn = $('#cursorNote');
-  const f = hover && R.foeAt(G, hover.x, hover.y);
-  if (f && !isModal()) {
+function foeInfo(f) {
     const s = R.heroStats(G), D = R.foeAttackDice(G, f);
     const abil = (f.abilities || []).map(k => `<div class="abil">${R.FOE_ABILITIES[k].icon} <b style="color:#ffcfa0;font-size:12px">${esc(R.FOE_ABILITIES[k].name)}</b>: ${esc(R.FOE_ABILITIES[k].text)}</div>`).join('');
     const reach = R.inReach(G, G.pos, f, R.heroReach(G));
@@ -399,7 +412,15 @@ function showTip(px, py) {
       <div>${D.n} attack${D.n === 1 ? '' : 's'} × ${fmt(f.damage)} · lands on 1–${D.landOn} · ${f.reach > 1 ? `ranged ${f.reach}` : 'melee'} · move ${f.move}</div>
       ${f.type !== 'minion' ? `<div class="dim">Your hit: ${fmt(Math.round(s.damage * (1 - f.armor / 100)))} (crit ${fmt(Math.round(s.damage * s.critMult * (1 - f.armor / 100)))})</div>` : ''}
       ${f.ability ? `<div class="dim"><i>${esc(f.ability)}</i></div>` : ''}${abil}
-      <div style="margin-top:4px;color:${reach ? 'var(--bad)' : 'var(--dim)'}">${reach ? (R.strikeLeft(G) ? 'Click to spend hits on it' : R.canAttack(G) ? 'In reach: click to attack it' : 'In reach') : 'Out of your reach'}</div>`;
+      <div style="margin-top:4px;color:${reach ? 'var(--bad)' : 'var(--dim)'}">${reach ? (R.strikeLeft(G) ? 'Click to spend hits on it' : R.canAttack(G) ? 'In reach: click to attack it' : 'In reach') : 'Out of your reach'}</div>`.replace(/Click/g, TOUCH ? 'Tap' : 'Click');
+}
+function showTip(px, py) {
+  if (TOUCH) return;
+  const tip = $('#tip'), cn = $('#cursorNote');
+  const f = hover && R.foeAt(G, hover.x, hover.y);
+  if (f && !isModal()) {
+    tip.innerHTML = foeInfo(f);
+    tip.className = '';
     tip.hidden = false;
     tip.style.left = Math.min(innerWidth - 320, px + 18) + 'px';
     tip.style.top = Math.min(innerHeight - 200, py + 12) + 'px';
@@ -414,12 +435,69 @@ function showTip(px, py) {
   noteText = '';
 }
 
+// What tapping square t would do: a label for the confirm button, or null.
+function intentFor(t) {
+  if (!t || busy || G.stage !== 'scene') return null;
+  if (mode.kind === 'power') {
+    const spec = R.powerSpec(G, mode.p), valid = R.powerTargets(G, mode.p);
+    if (spec.mode === 'self') return null;
+    const f = R.foeAt(G, t.x, t.y);
+    if (spec.mode === 'foe' || spec.mode === 'foes') return f && valid.some(c => c.id === f.id) ? `${mode.p.name}: ${f.name}` : null;
+    return valid.some(c => c.x === t.x && c.y === t.y) ? `${mode.p.name} here` : null;
+  }
+  const f = R.foeAt(G, t.x, t.y);
+  if (f) {
+    const reach = R.inReach(G, G.pos, f, R.heroReach(G));
+    if (reach && R.strikeLeft(G)) return `Strike ${f.name}`;
+    if (reach && R.canAttack(G)) return `Attack ${f.name} (${R.attackPool(G).total}d6)`;
+    return null;
+  }
+  if (G.map.chests.some(c => c.x === t.x && c.y === t.y && !c.opened)) return 'Open chest';
+  if (G.cleared && t.x === G.map.exit.x && t.y === G.map.exit.y) return 'Descend the stair';
+  const n = R.heroMoves(G).get(key(t.x, t.y));
+  if (n && n.cost) {
+    const blows = R.freeBlowsOn(G, pathTo(R.heroMoves(G), t.x, t.y)).length;
+    return `Move here${G.cleared ? '' : ` (${n.cost})`}${blows ? ` ⚠ ${blows} free blow${blows > 1 ? 's' : ''}` : ''}`;
+  }
+  return null;
+}
+// Touch: the first tap selects a square (path preview, foe card); a second tap on it, or the button, does it.
+let sel = null;
+function selectTile(t) {
+  sel = t; hover = t;
+  updateHighlights();
+  const tip = $('#tip'), label = intentFor(t);
+  const f = t && R.foeAt(G, t.x, t.y);
+  if (!t || (!f && !label)) { tip.hidden = true; sel = null; hover = null; updateHighlights(); return; }
+  tip.className = 'docked';
+  tip.innerHTML = `${f ? foeInfo(f) : ''}${label ? `<button class="primary go">${esc(label)}</button>` : ''}<button class="x" aria-label="Close">✕</button>`;
+  tip.hidden = false;
+  const go = tip.querySelector('.go');
+  if (go) go.onclick = () => { const q = sel; clearSel(); clickTile(q); };
+  tip.querySelector('.x').onclick = clearSel;
+}
+function clearSel() { sel = null; hover = null; $('#tip').hidden = true; updateHighlights(); }
+
 // ================================================================== input
 function bindInput() {
   const cv = $('#view');
   let down = null, dragging = false;
-  cv.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, b: e.button }; dragging = false; cv.setPointerCapture(e.pointerId); });
+  const pts = new Map();
+  let pinch = 0;
+  cv.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); dragging = true; return; }
+    down = { x: e.clientX, y: e.clientY, b: e.button, touch: e.pointerType !== 'mouse' }; dragging = false; cv.setPointerCapture(e.pointerId);
+  });
+  const lift = e => { pts.delete(e.pointerId); if (pts.size < 2) pinch = 0; };
+  cv.addEventListener('pointercancel', e => { lift(e); down = null; });
   cv.addEventListener('pointermove', e => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pts.size === 2) {
+      const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+      view.zoomBy(d / pinch); pinch = d; return;
+    }
+    if (e.pointerType !== 'mouse' && !down) return;
     if (down) {
       const dx = e.clientX - down.x, dy = e.clientY - down.y;
       if (dragging || Math.hypot(dx, dy) > 7) { dragging = true; view.pan(dx, dy); down.x = e.clientX; down.y = e.clientY; cv.style.cursor = 'grabbing'; }
@@ -432,11 +510,17 @@ function bindInput() {
   });
   cv.addEventListener('pointerup', e => {
     cv.style.cursor = 'default';
+    lift(e);
     const was = down; down = null;
     if (!was || dragging) return;
     if (was.b === 2) { cancelMode(); return; }
     const t = view.pick(e.clientX, e.clientY);
-    if (t) clickTile(t);
+    if (!was.touch) { if (t) clickTile(t); return; }
+    // touch: spending banked hits on a foe in reach is instant; anything else is select, then confirm
+    const f = t && R.foeAt(G, t.x, t.y);
+    if (f && R.strikeLeft(G) && mode.kind === 'idle' && R.inReach(G, G.pos, f, R.heroReach(G))) { clearSel(); clickTile(t); return; }
+    if (t && sel && t.x === sel.x && t.y === sel.y && intentFor(t)) { clearSel(); clickTile(t); return; }
+    selectTile(t);
   });
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('wheel', e => { e.preventDefault(); view.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); }, { passive: false });
@@ -529,7 +613,7 @@ async function firePower(target, p = mode.p) {
   mode = { kind: 'idle' };
   const r = await act(() => R.usePower(G, p.key, target, rng));
   if (r?.ok && r.attack && G.stage === 'scene') {
-    toast(p.name, R.foesInReach(G).length ? 'Attack primed: click a foe in reach (or press A) to roll.' : 'Attack primed: move into reach, then attack.');
+    toast(p.name, R.foesInReach(G).length ? `Attack primed: ${TOUCH ? 'tap Strike' : 'click a foe in reach (or press A)'} to roll.` : 'Attack primed: move into reach, then attack.');
   }
 }
 
@@ -662,14 +746,15 @@ function help(after) {
   const foes = Object.entries(R.FOE_ABILITIES).map(([, A]) => `<p>${A.icon} <b>${esc(A.name)}</b>: ${esc(A.text.replace(/″/g, ' squares'))}</p>`).join('');
   const p = modal(`<button class="close">✕</button><h2>How to play</h2><div class="help">
     <h3>Your turn</h3><p>A <b>move</b> and <b>one action</b> (Attack, a Power, or Sprint), in any order. Blue squares show where you can walk. Climbing one level costs an extra square; rough ground costs 2. Ledges two levels high need a leap, grapple or teleport.</p>
-    <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend by clicking foes in reach: a minion dies to one hit; an elite or boss takes all your remaining hits (crits first). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
-    <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill. <b>Attack powers</b> (marked "attack") prime your attack instead: use one, then attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
+    <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend by clicking foes in reach; unspent hits stay until you end your turn, so you can move and keep striking: a minion dies to one hit; an elite or boss takes all your remaining hits (crits first). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
+    <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
     <h3>Breaking away</h3><p>Walking away from a foe beside you gives it a <b>free blow</b> (the path turns red). Leaps, teleports and Vanish avoid it.</p>
     <h3>Defending</h3><p>In the enemy phase each foe rolls one die per attack: every 1–3 lands (1–2 if your armor is 30%+). You take an extra die when <b>surrounded</b> (3+ foes beside you) or attacked <b>from higher ground</b>. Armor reduces the damage; a <b>ward</b> soaks the rest.</p>
     <h3>Chasms</h3><p>A Slam can hurl you into a chasm: a fall costs 10% of your health and foes lose you. Climbing out is your action: d6 4+, with +1 for each failed try. Minions pushed into a chasm are gone; elites climb out hurt.</p>
-    <h3>Waves and scenes</h3><p>Each scene comes from the Delvers' Ledger adventure planner: skirmishes, swarms, elite packs, gauntlets and bosses, sized to your gear when each act began. Reinforcements arrive at the end of later rounds. Clear every foe, open the chests, then take the glowing spiral stair in the west wall. Between acts the Rakshasa buys your spare gear for Favour and sells boons and wares.</p>
+    <h3>Waves and scenes</h3><p>Each scene comes from the Delvers' Ledger adventure planner: skirmishes, swarms, elite packs, gauntlets and bosses, sized to your gear when each act began. Reinforcements arrive at the end of later rounds. Clear every foe and the turns stop: walk freely, open the chests (gold beacons) and take the glowing spiral stair in the west wall; the buttons at the bottom walk you there. Between acts the Rakshasa buys your spare gear for Favour and sells boons and wares.</p>
     <h3>Foe abilities</h3>${foes}
     <h3>Keys</h3><p><kbd>A</kbd> attack · <kbd>S</kbd> sprint · <kbd>1</kbd>–<kbd>9</kbd> powers · <kbd>E</kbd>/<kbd>Enter</kbd> end turn · <kbd>I</kbd> gear · <kbd>C</kbd> centre · arrows or drag to pan · wheel to zoom · <kbd>Esc</kbd>/right-click cancels.</p>
+    <h3>On a phone</h3><p>Tap a square or foe to select it: the path, any free blows and the foe's details show, with a button to confirm. Tap it again (or the button) to do it. Banked hits are spent with a single tap on a foe in reach. Drag to pan, pinch to zoom.</p>
     </div><div class="credits">Art: Kenney "Isometric Miniature Dungeon" (CC0) · Flare-format monster renders from OpenGameArt: orcs, spiders and werebear by johndh and Wciow (CC-BY-SA 3.0), slime and demon by ryan.dansie (CC0 / CC-BY-SA 3.0) · Rakshasa portrait from Delvers' Ledger · cliffs, effects, dice and cards drawn in code.</div>`, { onClose: after });
   p.querySelector('.close').onclick = closeModal;
 }

@@ -25,7 +25,7 @@ export class View {
     addEventListener('resize', () => this.resize());
   }
   resize() {
-    const r = devicePixelRatio || 1;
+    const r = Math.min(2, devicePixelRatio || 1);
     this.dpr = r;
     this.c.width = Math.round(innerWidth * r);
     this.c.height = Math.round(innerHeight * r);
@@ -41,8 +41,9 @@ export class View {
     for (const f of G.foes) if (!f.dead) this.ensure(f.id);
     // fit most of the map on screen, then look at the hero
     const span = (G.map.w + G.map.h) * HW;
-    this.cam.zoom = Math.max(0.5, Math.min(0.9, innerWidth / (span * 0.7), innerHeight / (span * 0.48)));
-    const mid = { x: (G.pos.x + G.map.w / 2) / 2, y: (G.pos.y + G.map.h / 2) / 2 };
+    const phone = innerWidth < 700;
+    this.cam.zoom = phone ? 0.62 : Math.max(0.5, Math.min(0.9, innerWidth / (span * 0.7), innerHeight / (span * 0.48)));
+    const mid = phone ? { x: G.pos.x - 2, y: G.pos.y - 2 } : { x: (G.pos.x + G.map.w / 2) / 2, y: (G.pos.y + G.map.h / 2) / 2 };
     const t = this.iso(mid.x, mid.y, 0);
     this.cam.x = t.x; this.cam.y = t.y;
   }
@@ -262,6 +263,7 @@ export class View {
       }
     }
     this.drawZone();
+    this.drawBeacons();
     for (const v of this.vfx) this.drawVfx(v);
     // floating text on top
     for (const t of this.texts) {
@@ -369,6 +371,25 @@ export class View {
     if (hl.picked?.has(k)) dia('rgba(255,230,120,0.45)', '#ffe08a');
     if (hl.path?.has(k)) { g.fillStyle = hl.pathDanger?.has(k) ? '#ff6a4a' : '#bfe0ff'; g.beginPath(); g.ellipse(c.x, c.y, 7, 4, 0, 0, 7); g.fill(); }
     if (hl.hover && hl.hover.x === x && hl.hover.y === y) dia(null, hl.hoverColor || 'rgba(255,255,255,0.8)', 0.96);
+  }
+  // Gold beacons over unopened chests (and the stair once the scene is clear), so loot is easy to find.
+  drawBeacons() {
+    const G = this.G, g = this.g;
+    const marks = G.map.chests.filter(c => !c.opened).map(c => ({ ...c, col: '255,210,90' }));
+    if (G.cleared) marks.push({ ...G.map.exit, col: '120,220,255' });
+    for (const m of marks) {
+      const c = this.iso(m.x, m.y, this.elev(m.x, m.y)), bob = Math.sin(this.time * 3 + m.x) * 5;
+      g.save();
+      const grd = g.createLinearGradient(0, c.y - 150, 0, c.y);
+      grd.addColorStop(0, `rgba(${m.col},0)`); grd.addColorStop(1, `rgba(${m.col},${G.cleared ? 0.45 : 0.2})`);
+      g.fillStyle = grd; g.fillRect(c.x - 9, c.y - 150, 18, 150);
+      if (G.cleared) {
+        g.translate(c.x, c.y - 92 + bob);
+        g.fillStyle = `rgb(${m.col})`; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 3;
+        g.beginPath(); g.moveTo(-13, -16); g.lineTo(13, -16); g.lineTo(0, 4); g.closePath(); g.stroke(); g.fill();
+      }
+      g.restore();
+    }
   }
   drawZone() {
     const z = this.G.zone; if (!z || z.round !== this.G.round) return;
