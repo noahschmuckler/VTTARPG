@@ -359,9 +359,37 @@ const SPECS = {
   step: { mode: 'foe', range: 6, sight: false, strike: true, text: 'Pick a foe within 6: you appear behind it, then attack.' },
   smoke: { mode: 'self', text: 'Vanish into smoke.' },
 };
+// What each class power does in this game (the Ledger's own text is written for a tabletop).
+const DESC = {
+  leap: 'Leap up to 4 squares, even 3 levels up onto a ledge, with no free blows. Then attack in the same action with +2 dice.',
+  quake: 'Slam the ground: every foe within 2 squares takes a hit and is hurled 3 squares away. A foe slammed into a wall, ledge or another foe takes +1 hit; minions knocked into a chasm are gone.',
+  bulwark: 'Gain a 600 ward and roar: every foe within 3 squares is dragged to your side.',
+  recall: 'Swap places with any foe within 10 squares (no free blows) and gain a 300 ward.',
+  circle: 'Gain a 300 ward and heal 10%. Foes can\'t step into the 2-square circle around you until the next round.',
+  hammer: 'Strike a foe within 6 squares in sight: 2 hits, knocked 3 squares back (+1 hit if slammed into something), and pinned until the next round.',
+  grapple: 'Haul yourself up to a higher square within 8 in sight, with no free blows. Then attack in the same action with +1 die (plus high ground).',
+  vanish: 'Move up to 4 squares and become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
+  pin: 'Pin up to 2 foes within 12 squares in sight so they can\'t move until the next round. +2 dice on your next attack.',
+  blink: 'Teleport up to 6 squares, to any height and through anything, with no free blows. Gain a 200 ward.',
+  well: 'Pick a point within 8 squares in sight: every foe within 3 of it is dragged toward it and pinned until the next round. +2 dice on your next attack.',
+  meteor: 'Pick a point within 10 squares: every foe within 2 of it takes 2 hits (minions are slain).',
+  step: 'Teleport behind a foe within 6 squares, with no free blows. Then attack in the same action for triple damage.',
+  smoke: 'Become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
+};
+export const powerText = p => DESC[p.key] || p.text;
 export function powerSpec(G, p) {
   if (SPECS[p.key]) return SPECS[p.key];
-  return { mode: 'self', text: p.text };
+  return { mode: 'self', text: soloNotes(p) || p.text };
+}
+// How a set power's effects play out with one hero on a grid (shown with the power's text).
+function soloNotes(p) {
+  const out = [];
+  for (const f of p.effects || []) {
+    if (f.kind === 'smite') out.push(`Lightning strikes up to ${f.kills} minions within 6 in sight; any left over join your hits (minions only).`);
+    if (f.kind === 'energize' && f.who === 'others') out.push(`Solo: you gain ${Math.round(f.amount * 0.5)} energy instead.`);
+    if ((f.kind === 'ward' || f.kind === 'heal') && f.who === 'party') out.push('Solo: the party is you.');
+  }
+  return out.join(' ');
 }
 export const powerList = G => powersFor(G.hero);
 export function powerUsable(G, p) {

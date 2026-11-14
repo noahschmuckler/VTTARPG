@@ -192,6 +192,7 @@ function victory() {
 async function act(fn, { quiet = false } = {}) {
   if (busy || !G) return;
   if (sel) clearSel();
+  if (mode.kind === 'ware') mode = { kind: 'idle' };
   busy = true;
   const r = fn();
   if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; refresh(); return r; }
@@ -330,8 +331,9 @@ function refresh(light = false) {
     const b = document.createElement('button');
     const spec = R.powerSpec(G, p);
     b.innerHTML = `${esc(p.name)}<small>${p.cost} energy${p.attack ? ' · attack' : spec.strike ? ' · + strike' : ''}</small>`;
-    b.title = `${p.name} (${i + 1}) · ${p.cost} energy\n${p.text}${spec.text && spec.text !== p.text ? `\n▸ ${spec.text}` : ''}${p.boosted?.length ? `\nBoosted by: ${p.boosted.join(', ')}` : ''}`;
-    b.disabled = busyOr(R.powerUsable(G, p));
+    b.title = `${p.name} (${i + 1}) · ${p.cost} energy\n${R.powerText(p)}${p.boosted?.length ? `\nBoosted by: ${p.boosted.join(', ')}` : ''}`;
+    b.disabled = busy;
+    if (!R.powerUsable(G, p)) b.classList.add('unusable');
     if (p.set) { b.classList.add('set'); b.style.setProperty('--setc', R.SETS[p.set].color); }
     if (mode.kind === 'power' && mode.p.key === p.key) b.classList.add('active');
     b.onclick = () => startPower(p);
@@ -346,7 +348,8 @@ function refresh(light = false) {
     b.innerHTML = `${consumableSVG(w.key, 22)}${esc(C.name)}`;
     b.title = `${C.name}: ${C.text} (free, one ware per turn)`;
     b.disabled = busy || G.turn.ware || G.stage !== 'scene';
-    b.onclick = () => act(() => R.useWare(G, w.id, rng));
+    if (mode.kind === 'ware' && mode.w.id === w.id) b.classList.add('active');
+    b.onclick = () => { if (mode.kind === 'ware' && mode.w.id === w.id) return cancelMode(); mode = { kind: 'ware', w }; refresh(); };
     wa.appendChild(b);
   }
   // strike pool
@@ -361,10 +364,19 @@ function refresh(light = false) {
   if (mode.kind === 'power') {
     tg.hidden = false;
     const spec = R.powerSpec(G, mode.p);
-    tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(mode.p.name)}</b><span>${esc(spec.text)}</span>${spec.mode === 'foes' ? `<button class="primary" id="tgGo" ${mode.picked.length ? '' : 'disabled'}>Confirm (${mode.picked.length})</button>` : ''}${spec.mode === 'self' ? '<button class="primary" id="tgGo">Use</button>' : ''}<button id="tgX">Cancel <kbd>Esc</kbd></button>`;
+    const usable = R.powerUsable(G, mode.p), none = spec.mode !== 'self' && !R.powerTargets(G, mode.p).length;
+    const why = !usable ? (G.hero.energy < mode.p.cost ? `Needs ${mode.p.cost} energy (you have ${G.hero.energy}).` : 'You have already acted this turn.') : none ? 'Nothing in range from here: move first.' : '';
+    const howTo = spec.mode !== 'self' || R.powerText(mode.p) === mode.p.text ? (spec.text !== mode.p.text ? spec.text : '') : '';
+    tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(mode.p.name)} <span class="dim" style="font:12px var(--sans)">${mode.p.cost} energy</span></b><span class="desc">${esc(R.powerText(mode.p))}${why ? `<br><span style="color:var(--bad)">${esc(why)}</span>` : howTo ? `<br><span style="color:var(--brass2)">▸ ${esc(howTo)}</span>` : ''}</span>${spec.mode === 'foes' ? `<button class="primary" id="tgGo" ${mode.picked.length ? '' : 'disabled'}>Confirm (${mode.picked.length})</button>` : ''}${spec.mode === 'self' ? `<button class="primary" id="tgGo" ${usable ? '' : 'disabled'}>Use ${esc(mode.p.name)}</button>` : ''}<button id="tgX">Cancel <kbd>Esc</kbd></button>`;
     tg.querySelector('#tgX').onclick = cancelMode;
     const go = tg.querySelector('#tgGo');
     if (go) go.onclick = () => firePower(spec.mode === 'foes' ? { ids: mode.picked } : null);
+  } else if (mode.kind === 'ware') {
+    const C = R.CONSUMABLES[mode.w.key];
+    tg.hidden = false;
+    tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(C.name)} <span class="dim" style="font:12px var(--sans)">ware · free</span></b><span class="desc">${esc(C.text)} Using a ware doesn't take your action; one per turn.</span><button class="primary" id="tgGo" ${G.turn.ware ? 'disabled' : ''}>Use ${esc(C.name)}</button><button id="tgX">Cancel <kbd>Esc</kbd></button>`;
+    tg.querySelector('#tgX').onclick = cancelMode;
+    tg.querySelector('#tgGo').onclick = () => { const w = mode.w; mode = { kind: 'idle' }; act(() => R.useWare(G, w.id, rng)); };
   } else tg.hidden = true;
   updateHighlights();
 }
@@ -443,7 +455,7 @@ function intentFor(t) {
   if (!t || busy || G.stage !== 'scene') return null;
   if (mode.kind === 'power') {
     const spec = R.powerSpec(G, mode.p), valid = R.powerTargets(G, mode.p);
-    if (spec.mode === 'self') return null;
+    if (spec.mode === 'self' || !R.powerUsable(G, mode.p)) return null;
     const f = R.foeAt(G, t.x, t.y);
     if (spec.mode === 'foe' || spec.mode === 'foes') return f && valid.some(c => c.id === f.id) ? `${mode.p.name}: ${f.name}` : null;
     return valid.some(c => c.x === t.x && c.y === t.y) ? `${mode.p.name} here` : null;
@@ -589,24 +601,20 @@ async function walkThen(target, fn, near = 1) {
 }
 function startPower(p) {
   if (busy || !G) return;
-  if (!R.powerUsable(G, p)) return toast(p.name, G.hero.energy < p.cost ? `Needs ${p.cost} energy.` : 'You have already acted this turn.', 'err');
   if (mode.kind === 'power' && mode.p.key === p.key) return cancelMode();
   const spec = R.powerSpec(G, p);
-  if (spec.mode === 'self' && !spec.radius) { mode = { kind: 'idle' }; return firePower(null, p); }
-  if (spec.mode !== 'self' && !R.powerTargets(G, p).length) return toast(p.name, 'No valid target from here.', 'err');
   mode = { kind: 'power', p, picked: [] };
   refresh();
 }
 async function clickPower(t) {
   const p = mode.p, spec = R.powerSpec(G, p);
-  if (spec.mode === 'self') return firePower(null);
+  if (spec.mode === 'self' || !R.powerUsable(G, p)) return; // self powers fire only from the Use button
   const valid = R.powerTargets(G, p);
   if (spec.mode === 'foe' || spec.mode === 'foes') {
     const f = R.foeAt(G, t.x, t.y);
     if (!f || !valid.some(c => c.id === f.id)) return toast(p.name, 'Pick a highlighted foe.', 'err');
     if (spec.mode === 'foe') return firePower({ ids: [f.id] });
     mode.picked = mode.picked.includes(f.id) ? mode.picked.filter(x => x !== f.id) : [...mode.picked, f.id].slice(-(spec.max || 2));
-    if (mode.picked.length >= (spec.max || 2)) return firePower({ ids: mode.picked });
     return refresh();
   }
   if (!valid.some(c => c.x === t.x && c.y === t.y)) return toast(p.name, 'Pick a highlighted square.', 'err');
@@ -648,6 +656,16 @@ function showLoot() {
     await playFx(); refresh(); save();
   });
 }
+function abilityRows() {
+  const pw = R.powerList(G).map(p => {
+    const spec = R.powerSpec(G, p), how = R.powerText(p) === p.text && spec.text !== p.text ? spec.text : '';
+    const tag = p.attack ? 'attack power' : spec.strike ? 'move + strike' : p.set ? `${R.SETS[p.set].name} set (${p.pieces} piece${p.pieces > 1 ? 's' : ''})` : R.CLASSES[G.hero.cls].name;
+    return `<div class="abil" style="${p.set ? `border-left-color:${R.SETS[p.set].color}` : ''}"><b>${esc(p.name)}</b> <span class="dim">${p.cost} energy · ${esc(tag)}</span><div>${esc(R.powerText(p))}</div>${how ? `<div class="how">▸ ${esc(how)}</div>` : ''}${p.boosted?.length ? `<div class="dim">Boosted by ${esc(p.boosted.join(', '))}</div>` : ''}</div>`;
+  }).join('');
+  const wares = (G.hero.consumables || []).map(w => R.CONSUMABLES[w.key]).filter(Boolean)
+    .map(C => `<div class="abil ware"><b>${esc(C.name)}</b> <span class="dim">ware · free, one per turn</span><div>${esc(C.text)}</div></div>`).join('');
+  return pw + wares;
+}
 function inventory(tab = 'gear') {
   if (!G) return;
   const h = G.hero, s = R.heroStats(G);
@@ -660,7 +678,8 @@ function inventory(tab = 'gear') {
   const p = modal(`<button class="close">✕</button><h2>${esc(h.name)} <span class="dim" style="font-size:14px">${h.name === R.CLASSES[h.cls].name ? '' : `the ${esc(R.CLASSES[h.cls].name)} · `}${h.favour || 0} Favour</span></h2>
     <div class="inv"><div>
       <div class="statgrid">${stat('Max health', fmt(s.maxHp))}${stat('Armor', s.armor + '%')}${stat('Attack dice', s.dice)}${stat('Damage per hit', fmt(s.damage))}${stat('Crit multiplier', '×' + s.critMult)}${stat('Cleave', s.cleave || 0)}${stat('Energy per round', s.energyPerRound)}${stat('Energy per kill', s.energyPerKill)}${stat('Max energy', s.maxEnergy)}${stat('Move', s.move)}${stat('Reach', s.reach || 'melee')}</div>
-      <h3>Sets</h3><div class="sets">${setRows}</div>
+      <h3>Abilities</h3><div class="abils">${abilityRows()}</div>
+      <h3 style="margin-top:10px">Sets</h3><div class="sets">${setRows}</div>
       <h3 style="margin-top:10px">Synergies</h3><div class="sets">${syn}</div>
       <h3 style="margin-top:10px">Equipped</h3><div class="slots">${slots}</div>
     </div><div>
@@ -751,6 +770,7 @@ function help(after) {
     <h3>Your turn</h3><p>A <b>move</b> and <b>one action</b> (Attack, a Power, or Sprint), in any order. Blue squares show where you can walk. Climbing one level costs an extra square; rough ground costs 2. Ledges two levels high need a leap, grapple or teleport.</p>
     <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend by clicking foes in reach; unspent hits stay until you end your turn, so you can move and keep striking: a minion dies to one hit; an elite or boss takes all your remaining hits (crits first). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
     <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
+    <p>Tapping a power or ware never fires it straight away: a panel shows what it does, and it only happens when you confirm (Use, Confirm, or picking a target). Every ability you have is described under Gear.</p>
     <h3>Breaking away</h3><p>Walking away from a foe beside you gives it a <b>free blow</b> (the path turns red). Leaps, teleports and Vanish avoid it.</p>
     <h3>Defending</h3><p>In the enemy phase each foe rolls one die per attack: every 1–3 lands (1–2 if your armor is 30%+). You take an extra die when <b>surrounded</b> (3+ foes beside you) or attacked <b>from higher ground</b>. Armor reduces the damage; a <b>ward</b> soaks the rest.</p>
     <h3>Chasms</h3><p>A Slam can hurl you into a chasm: a fall costs 10% of your health and foes lose you. Climbing out is your action: d6 4+, with +1 for each failed try. Minions pushed into a chasm are gone; elites climb out hurt.</p>

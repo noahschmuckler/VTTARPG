@@ -24,7 +24,7 @@ The game imports the tabletop engine unchanged (`src/ledger/` is a copy of `ttar
 | One move + one action | Walk (blue squares), then Attack, a Power or Sprint. Attack powers prime the attack; move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) move you, then you attack in the same action. Rolled hits keep until you end your turn. Once a scene is clear, turns stop and you walk freely. |
 | Height, flanking, hiding | High ground and attacking from hiding add dice; foes get an extra die when you're surrounded or they stand above you. |
 | Breaking away | Walking out of a foe's reach gives it a free blow; the path preview turns red. |
-| Positional powers | Done for real on the grid: leap, grapple, blink, swap, push into walls (slammed, +1 hit) or chasms, pull, pin, gravity well, meteor, warding circle, vanish. |
+| Positional powers | Tapping a power or ware opens a panel describing it; nothing fires until you confirm. Gear lists every ability you have. Done for real on the grid: leap, grapple, blink, swap, push into walls (slammed, +1 hit) or chasms, pull, pin, gravity well, meteor, warding circle, vanish. |
 | Gear, sets, synergies | `makeItem`, `derive`, `powersFor`: 6 four-piece sets whose powers unlock with one piece, 8 hidden synergies. |
 | Foe abilities | Enrage, Stoneskin, Call the Horde, Summoner, Regenerate, Sweeping Blows, Energy Leech, Thick Hide, Slam (hurls you, maybe into a chasm), Death Throes. |
 | Adventure planner | `planScene` sizes every scene (skirmish, swarm, elite pack, gauntlet, boss) against the hero as each act began, with waves of reinforcements. |

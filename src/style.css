@@ -227,3 +227,12 @@ kbd { font: 11px var(--sans); padding: 0 4px; border: 1px solid var(--edge); bor
 @media (max-width: 900px) { #wardNum { width: 74px; font-size: 11px; bottom: 82px; } }
 @media (max-width: 700px) { #wardNum { width: auto; left: 12px; bottom: auto; top: -11px; font-size: 11px; padding: 0 8px; line-height: 18px; }
   .orb .ward { border-radius: 12px; } }
+
+/* abilities list in the gear screen */
+.abils { display: grid; gap: 6px; }
+.abil { border-left: 3px solid var(--brass); background: #15110c; border-radius: 6px; padding: 6px 8px; font-size: 12.5px; }
+.abil b { font-family: var(--serif); color: var(--brass2); }
+.abil.ware { border-left-color: #9b6bff; }
+.abil .how { color: var(--brass2); margin-top: 2px; }
+#targeting .desc { max-width: 520px; font-size: 13px; }
+#powers button.unusable { opacity: 0.45; }
