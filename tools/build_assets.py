@@ -27,8 +27,15 @@ TILES = ['stone', 'stoneTile', 'stoneUneven', 'stoneMissingTiles', 'stoneInset',
          'tableShortChairs', 'tableChairsBroken', 'stoneWall', 'stoneWallAged', 'stoneWallWindow', 'stoneWallWindowBars',
          'stoneWallColumn', 'stoneWallBroken', 'stoneWallHole', 'stoneWallGateClosed', 'stoneWallGateOpen',
          'stoneWallDoorClosed', 'stairsSpiral', 'woodenSupports', 'stoneWallCorner', 'stoneWallRound']
+FLOORS = {'stone', 'stoneTile', 'stoneUneven', 'stoneMissingTiles', 'stoneInset', 'dirt', 'dirtTiles', 'planks', 'planksBroken', 'planksHole'}
+def wanted(name):  # only the rotations the renderer draws: floors face N, bridges E, walls S/E, the stair S; props any way
+    if name in FLOORS: return 'N'
+    if name == 'bridge': return 'E'
+    if name.startswith('stoneWall'): return 'SE'
+    if name == 'stairsSpiral': return 'S'
+    return 'NESW'
 for name in TILES:
-    for d in 'NESW':
+    for d in wanted(name):
         p = os.path.join(KDIR, 'Isometric', f'{name}_{d}.png')
         if not os.path.exists(p):
             continue

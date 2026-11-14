@@ -1,6 +1,6 @@
 // The isometric (3/4) view: Kenney tiles and props, Flare-format monsters, custom cliffs, effects and overlays.
 // The renderer never decides anything: it shows the state, and plays the rules' effect list (G.fx) as tweens.
-import { A, heroSheet } from './assets.js';
+import { A, heroSheet, heroSheetName } from './assets.js';
 import { tile, key } from './grid.js';
 import { HERO_COLOR } from './content.js';
 import { derive } from '../ledger/engine.js';
@@ -61,6 +61,7 @@ export class View {
     if (!u) return null;
     const e = this.elev(u.x, u.y);
     const d = { id, x: u.x, y: u.y, e, dir: isHeroId(id) ? 5 : 1, anim: 'idle', at: Math.random() * 3, once: null, alpha: u.hero && u.hero.hp <= 0 ? 0.3 : 1, flash: 0, sink: 0, hp: u.hp, maxHp: u.maxHp, hero: isHeroId(id) };
+    if (u.hero && u.hero.hp <= 0) { d.anim = 'die'; d.once = { dur: 0.7, hold: true }; d.at = 1; } // already down: lying there
     this.disp.set(id, d);
     return d;
   }
@@ -424,12 +425,12 @@ export class View {
     const isHero = isHeroId(d.id), H = isHero ? u?.hero : null;
     if (isHero && !H) return;
     const active = isHero && H === G.hero && G.stage === 'scene' && !G.cleared;
-    const sheetName = isHero ? 'hero' : u?.sprite || 'orc';
+    const sheetName = isHero ? heroSheetName(H.cls) : u?.sprite || 'orc';
     const M = A.manifest.units[sheetName];
     const img = isHero ? heroSheet(H.cls) : A.units[sheetName];
     const c = this.iso(d.x, d.y, d.e);
     c.y += d.sink;
-    const scale = isHero ? 1.35 : (u?.scale || 1) * 1.05;
+    const scale = (isHero ? 0.56 : (u?.scale || 1) * 1.05) * (M.scale || 1); // M.scale: sheets stored below full size
     let alpha = d.alpha * (isHero && H.hidden ? 0.45 : 1);
     if (isHero && H.pit) c.y += 6;
     // shadow + ring
@@ -453,7 +454,7 @@ export class View {
     let anim = M.anims[d.anim] ? d.anim : (d.anim === 'attack' || d.anim === 'act') ? (M.anims.attack ? 'attack' : 'act') : 'idle';
     if (!M.anims[anim]) anim = 'idle';
     const [start, count] = M.anims[anim];
-    const fps = anim === 'run' ? (isHero ? 22 : 14) : anim === 'idle' ? 5 : anim === 'die' ? count / 0.7 : count / 0.45;
+    const fps = anim === 'run' ? (isHero ? 16 : 14) : anim === 'idle' ? 5 : anim === 'die' ? count / 0.7 : count / 0.45;
     let fi = Math.floor(d.at * fps);
     fi = d.once ? Math.min(count - 1, fi) : fi % count;
     const row = ((M.base - d.dir) % 8 + 8) % 8;
@@ -471,7 +472,7 @@ export class View {
     g.restore();
     // bars and badges
     if (d.alpha < 0.25) return;
-    const top = c.y - (isHero ? 92 : Math.min(140, 62 * (u?.scale || 1) + 20));
+    const top = c.y - (isHero ? 104 : Math.min(140, 62 * (u?.scale || 1) + 20));
     if (!isHero && u && !u.dead) {
       const big = u.type !== 'minion';
       const w = big ? 64 : 30, hp = d.hp ?? u.hp;

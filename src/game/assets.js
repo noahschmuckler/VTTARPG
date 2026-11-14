@@ -1,8 +1,6 @@
-// Loads the sprite manifest and images; makes per-calling tinted copies of the hero sheet,
-// and paints the custom pieces the packs don't have (cliff faces, chasm mouths).
-import { HERO_TINT } from './content.js';
+// Loads the sprite manifest and images, and paints the custom pieces the packs don't have (cliff faces, chasm mouths).
 
-export const A = { manifest: null, tiles: {}, units: {}, heroes: {}, brick: null, ready: false };
+export const A = { manifest: null, tiles: {}, units: {}, brick: null, ready: false };
 
 const load = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('Failed to load ' + src)); im.src = src; });
 
@@ -22,17 +20,9 @@ export async function loadAssets(base = 'assets/', onProgress = () => {}) {
   return A;
 }
 
-// The hero sheet, tinted for a calling (cached).
-export function heroSheet(cls) {
-  if (A.heroes[cls]) return A.heroes[cls];
-  const src = A.units.hero, c = document.createElement('canvas');
-  c.width = src.width; c.height = src.height;
-  const g = c.getContext('2d');
-  g.filter = HERO_TINT[cls] || 'none';
-  g.drawImage(src, 0, 0);
-  A.heroes[cls] = c;
-  return c;
-}
+// Each calling has its own sheet, composited from the Flare hero layers (tools/build_heroes.py).
+export const heroSheetName = cls => (A.units['hero_' + cls] ? 'hero_' + cls : 'hero_ironclad');
+export const heroSheet = cls => A.units[heroSheetName(cls)];
 
 // Custom: a sandstone block pattern matching the Kenney floor palette, for the sides of raised ground.
 function makeBrick() {

@@ -1,7 +1,7 @@
 // Delvers' Descent: the controller. Input, HUD, screens, and the loop that plays the rules' effects.
 import * as R from './game/rules.js';
 import { View, fmt } from './game/render.js';
-import { loadAssets, heroSheet, A } from './game/assets.js';
+import { loadAssets, heroSheet, heroSheetName, A } from './game/assets.js';
 import { rngFrom, key, dist, pathTo, tile } from './game/grid.js';
 import { HERO_COLOR, rosterFor } from './game/content.js';
 import { cardSVG, cardBackSVG, consumableSVG } from './ledger/art.js';
@@ -84,8 +84,8 @@ function narrate(title, text, button = 'Continue') {
 function heroPortrait(cls, w = 96, h = 120) {
   const c = document.createElement('canvas');
   c.width = w * 2; c.height = h * 2;
-  const g = c.getContext('2d'), M = A.manifest.units.hero, img = heroSheet(cls);
-  const row = ((M.base - 2) % 8 + 8) % 8, sc = 2.6;
+  const g = c.getContext('2d'), M = A.manifest.units[heroSheetName(cls)], img = heroSheet(cls);
+  const row = ((M.base - 2) % 8 + 8) % 8, sc = 1.25 * (M.scale || 1);
   g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.ellipse(w, h * 1.72, 40, 14, 0, 0, 7); g.fill();
   g.strokeStyle = HERO_COLOR[cls]; g.lineWidth = 3; g.stroke();
   g.drawImage(img, 0, row * M.fh, M.fw, M.fh, w - M.ax * sc, h * 1.72 - M.ay * sc, M.fw * sc, M.fh * sc);
@@ -113,7 +113,7 @@ function titleScreen() {
     <div class="classes">${cards}</div>
     <div class="name-row"><span id="partyNames"></span><button class="primary" id="go">Begin the descent</button></div>
     <div class="btnrow" style="justify-content:center">${saved ? `<button id="cont">Continue: ${esc(savedParty)} (${esc(saved.G.adv.acts[saved.G.act]?.name || '')})</button>` : ''}<button id="howto">How to play</button></div>
-    <div class="credits">Art: Kenney (CC0), Flare monster renders by johndh, Wciow and ryan.dansie on OpenGameArt (CC0 / CC-BY-SA 3.0). Rules: Delvers' Ledger. See CREDITS.md.</div>
+    <div class="credits">Art: Kenney (CC0); heroes from the Flare game by Clint Bellanger and contributors (CC-BY-SA 3.0); monster renders by johndh, Wciow and ryan.dansie on OpenGameArt (CC0 / CC-BY-SA 3.0). Rules: Delvers' Ledger. See CREDITS.md.</div>
   </div>`);
   const show = () => {
     p.querySelectorAll('.cls').forEach(el => {
@@ -983,7 +983,7 @@ function help(after) {
     <h3>Foe abilities</h3>${foes}
     <h3>Keys</h3><p><kbd>A</kbd> attack · <kbd>S</kbd> sprint · <kbd>1</kbd>–<kbd>9</kbd> powers · <kbd>E</kbd>/<kbd>Enter</kbd> end round · <kbd>Tab</kbd> next hero · <kbd>I</kbd> gear (party gear for a party) · <kbd>C</kbd> centre · arrows or drag to pan · wheel to zoom · <kbd>Esc</kbd>/right-click cancels.</p>
     <h3>On a phone</h3><p>Tap a square or foe to select it: the path, any free blows and the foe's details show, with a button to confirm. Tap it again (or the button) to do it. Banked hits are spent with a single tap on a foe in reach. Drag to pan, pinch to zoom.</p>
-    </div><div class="credits">Art: Kenney "Isometric Miniature Dungeon" (CC0) · Flare-format monster renders from OpenGameArt: orcs, spiders and werebear by johndh and Wciow (CC-BY-SA 3.0), slime and demon by ryan.dansie (CC0 / CC-BY-SA 3.0) · Rakshasa portrait from Delvers' Ledger · cliffs, effects, dice and cards drawn in code.</div>`, { onClose: after });
+    </div><div class="credits">Art: Kenney "Isometric Miniature Dungeon" (CC0) · heroes from the Flare game by Clint Bellanger and contributors (CC-BY-SA 3.0) · Flare-format monster renders from OpenGameArt: orcs, spiders and werebear by johndh and Wciow (CC-BY-SA 3.0), slime and demon by ryan.dansie (CC0 / CC-BY-SA 3.0) · Rakshasa portrait from Delvers' Ledger · cliffs, effects, dice and cards drawn in code.</div>`, { onClose: after });
   p.querySelector('.close').onclick = closeModal;
 }
 function menu() {

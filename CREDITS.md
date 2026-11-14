@@ -4,7 +4,8 @@
 
 | Asset | Author | Source | License |
 |---|---|---|---|
-| Isometric Miniature Dungeon (floors, walls, props, chests, stairs, the hero) | Kenney | https://opengameart.org/content/isometric-miniature-dungeon (kenney.nl) | CC0 |
+| Isometric Miniature Dungeon (floors, walls, props, chests, stairs) | Kenney | https://opengameart.org/content/isometric-miniature-dungeon (kenney.nl) | CC0 |
+| Hero layers (bodies, plate/chain/leather/mage armour, war hammer, smith's hammer, longbow, greatstaff, dagger, shields), composited into one sheet per calling | Clint Bellanger and the Flare contributors | https://github.com/flareteam/flare-game (mods/fantasycore/images/avatar) | CC-BY-SA 3.0 |
 | Orc sprite sheets (grunt, archer, brute, warlord) | johndh | https://opengameart.org/content/orc-flare-sprite-sheets | CC-BY-SA 3.0 (also GPL 2/3) |
 | Spider sprite sheets (cave spider, broodmother) | Wciow and johndh | https://opengameart.org/content/spider-flare-sprite-sheets | CC-BY-SA 3.0 (also GPL 3) |
 | Werebear sprite sheets (Loup Garou) | johndh | https://opengameart.org/content/werebear-flare-sprite-sheets | CC-BY-SA 3.0 (also GPL 3) |
@@ -18,7 +19,7 @@ sheets remain under CC-BY-SA 3.0.
 ## Custom (made for this game)
 
 - Cliff and ledge faces (a sandstone brick texture painted in code to match the Kenney palette), chasm mouths, bridges' void.
-- Per-calling hero colourings of the Kenney hero.
+- Each calling's outfit and weapon, and the compositing of the Flare layers (`tools/build_heroes.py`); the heroes' baked-in shadows are removed in favour of the game's own.
 - All effects: arrows, bolts, lightning, meteor, quake rings, smoke, wards, floating numbers, the dice tray.
 - Playing cards, card backs and ware icons (`src/ledger/art.js`, from Delvers' Ledger) and the Rakshasa portrait (from Delvers' Ledger).
 

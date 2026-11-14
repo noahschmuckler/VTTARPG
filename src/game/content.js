@@ -65,11 +65,4 @@ export const SOLO_GATE = {
   ],
 };
 
-export const HERO_TINT = {
-  ironclad: 'saturate(0.35) brightness(1.05) hue-rotate(185deg)',
-  runepriest: 'hue-rotate(130deg) saturate(1.2)',
-  ranger: 'hue-rotate(60deg) saturate(1.1)',
-  arcanist: 'hue-rotate(-25deg) saturate(1.9) brightness(1.05)',
-  shadowblade: 'hue-rotate(230deg) saturate(1.2) brightness(0.8)',
-};
 export const HERO_COLOR = { ironclad: '#9fb6d6', runepriest: '#5fd3c4', ranger: '#8fd16a', arcanist: '#ff8a3d', shadowblade: '#b88cff' };
