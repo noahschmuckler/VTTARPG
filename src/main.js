@@ -15,7 +15,7 @@ const RC = { common: 'var(--common)', magic: 'var(--magic)', rare: 'var(--rare)'
 const rarityColor = it => (it.set ? R.SETS[it.set].color : RC[it.rarity] || 'var(--common)');
 
 let G = null, rng = rngFrom(Date.now() & 0xffffffff), view, busy = false, mode = { kind: 'idle' }, speed = 1, hover = null;
-let pendingLoot = [], lastSave = 0;
+let pendingLoot = [], lastSave = 0, shown = null, spendKind = null;
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 if (TOUCH) document.documentElement.classList.add('touch');
 
@@ -194,10 +194,12 @@ async function act(fn, { quiet = false } = {}) {
   if (sel) clearSel();
   if (mode.kind === 'ware') mode = { kind: 'idle' };
   busy = true;
+  shown = { hp: G.hero.hp, ward: G.hero.ward || 0 }; // the HUD follows the effects, not the final state
   const r = fn();
-  if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; refresh(); return r; }
+  if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; shown = null; refresh(); return r; }
   refresh();
   await playFx();
+  shown = null;
   busy = false;
   if (mode.kind === 'power' && !R.powerUsable(G, mode.p) && !mode.keep) mode = { kind: 'idle' };
   refresh();
@@ -209,6 +211,11 @@ async function act(fn, { quiet = false } = {}) {
 async function playFx() {
   while (G.fx.length) {
     const e = G.fx.shift();
+    if (shown && e.id === 'hero') {
+      if (e.t === 'dmg') { shown.hp = Math.max(0, shown.hp - e.n); shown.ward = Math.max(0, shown.ward - (e.warded || 0)); }
+      if (e.t === 'heal') shown.hp += e.n;
+      if (e.t === 'ward') shown.ward += e.n;
+    }
     switch (e.t) {
       case 'log': addLog(e.text, e.kind); break;
       case 'dice': await showDice(e); break;
@@ -280,7 +287,7 @@ async function showDice(e) {
 
 function refresh(light = false) {
   if (!G || !G.map) return;
-  const s = R.heroStats(G), h = G.hero;
+  const s = R.heroStats(G), h = shown ? { ...G.hero, hp: Math.min(shown.hp, R.heroStats(G).maxHp), ward: shown.ward } : G.hero;
   // orbs
   $('#orbHp').style.setProperty('--pct', `${(h.hp / s.maxHp) * 100}%`);
   $('#orbEn').style.setProperty('--pct', `${(h.energy / s.maxEnergy) * 100}%`);
@@ -357,8 +364,12 @@ function refresh(light = false) {
   if (G.strike && R.strikeLeft(G)) {
     const S = G.strike;
     st.hidden = false;
-    st.innerHTML = `<span>Hits to spend:</span><span class="n">${S.hits}</span><span>hit${S.hits === 1 ? '' : 's'}</span>${S.crits ? `<span class="n" style="color:var(--legendary)">${S.crits}</span><span>crit${S.crits === 1 ? '' : 's'}</span>` : ''}${S.minion ? `<span class="n" style="color:var(--good)">${S.minion}</span><span>minion-only</span>` : ''}<span class="dim">${TOUCH ? 'Tap a red-ringed foe. Hits keep until End turn: you can move first.' : 'Click foes in reach (red rings). Big foes take every hit, minions one. Unspent hits last until you end your turn, so you can move and keep striking.'}</span>`;
-  } else st.hidden = true;
+    if (spendKind && !{ crit: S.crits, hit: S.hits, minion: S.minion }[spendKind]) spendKind = null;
+    const chip = (k, n, label, color) => n ? `<button class="sk ${spendKind === k ? 'on' : ''}" data-k="${k}" style="--c:${color}"><b>${n}</b> ${label}${n === 1 ? '' : 's'}</button>` : '';
+    st.innerHTML = `<span>Next ${TOUCH ? 'tap' : 'click'} spends:</span>
+      <button class="sk ${!spendKind ? 'on' : ''}" data-k="">Auto</button>${chip('crit', S.crits, 'crit', 'var(--legendary)')}${chip('hit', S.hits, 'hit', 'var(--brass2)')}${chip('minion', S.minion, 'minion-only hit', 'var(--good)')}
+      <span class="dim">One hit per ${TOUCH ? 'tap' : 'click'} on a red-ringed foe. Auto puts crits on elites and bosses and plain hits on minions. Hits keep until End turn.</span>`;
+    st.querySelectorAll('.sk').forEach(b => b.onclick = () => { spendKind = b.dataset.k || null; refresh(); });  } else st.hidden = true;
   // targeting bar
   const tg = $('#targeting');
   if (mode.kind === 'power') {
@@ -575,10 +586,10 @@ async function clickTile(t) {
   if (mode.kind === 'power') return clickPower(t);
   const f = R.foeAt(G, t.x, t.y);
   if (f) {
-    if (R.strikeLeft(G)) { if (R.inReach(G, G.pos, f, R.heroReach(G))) return act(() => R.spend(G, f.id, rng)); return toast(`${f.name} is out of reach`, 'Move closer, or spend your hits on a foe with a red ring.', 'err'); }
+    if (R.strikeLeft(G)) { if (R.inReach(G, G.pos, f, R.heroReach(G))) return act(() => R.spend(G, f.id, rng, spendKind)); return toast(`${f.name} is out of reach`, 'Move closer, or spend your hits on a foe with a red ring.', 'err'); }
     if (R.canAttack(G) && R.inReach(G, G.pos, f, R.heroReach(G))) {
       await act(() => R.attack(G, rng));
-      if (R.strikeLeft(G) && !f.dead) await act(() => R.spend(G, f.id, rng), { quiet: true });
+      if (R.strikeLeft(G) && !f.dead) await act(() => R.spend(G, f.id, rng, spendKind), { quiet: true });
       return;
     }
     return;
@@ -768,7 +779,7 @@ function help(after) {
   const foes = Object.entries(R.FOE_ABILITIES).map(([, A]) => `<p>${A.icon} <b>${esc(A.name)}</b>: ${esc(A.text.replace(/″/g, ' squares'))}</p>`).join('');
   const p = modal(`<button class="close">✕</button><h2>How to play</h2><div class="help">
     <h3>Your turn</h3><p>A <b>move</b> and <b>one action</b> (Attack, a Power, or Sprint), in any order. Blue squares show where you can walk. Climbing one level costs an extra square; rough ground costs 2. Ledges two levels high need a leap, grapple or teleport.</p>
-    <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend by clicking foes in reach; unspent hits stay until you end your turn, so you can move and keep striking: a minion dies to one hit; an elite or boss takes all your remaining hits (crits first). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
+    <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend one at a time by clicking foes in reach (pick Crit or Hit in the panel, or leave it on Auto); unspent hits stay until you end your turn, so you can move and keep striking: each hit kills a minion or deals your damage per hit to an elite or boss (a crit multiplies it). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
     <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
     <p>Tapping a power or ware never fires it straight away: a panel shows what it does, and it only happens when you confirm (Use, Confirm, or picking a target). Every ability you have is described under Gear.</p>
     <h3>Breaking away</h3><p>Walking away from a foe beside you gives it a <b>free blow</b> (the path turns red). Leaps, teleports and Vanish avoid it.</p>

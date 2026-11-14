@@ -20,7 +20,7 @@ The game imports the tabletop engine unchanged (`src/ledger/` is a copy of `ttar
 | Ledger piece | In the video game |
 |---|---|
 | Five callings (`CLASSES`) | Ironclad, Runepriest, Ranger, Arcanist, Shadowblade: same health, armor, dice, damage, move, reach and powers. |
-| Dice pool attacks | Roll d6s; every 4+ is a hit, 6s crit. Hits form a pool you spend by clicking foes in reach: a minion dies to one, a big foe takes the rest (crits first). |
+| Dice pool attacks | Roll d6s; every 4+ is a hit, 6s crit. Hits form a pool you spend one at a time by clicking foes in reach, choosing crit or plain hit (or Auto: crits to elites and bosses, hits to minions). |
 | One move + one action | Walk (blue squares), then Attack, a Power or Sprint. Attack powers prime the attack; move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) move you, then you attack in the same action. Rolled hits keep until you end your turn. Once a scene is clear, turns stop and you walk freely. |
 | Height, flanking, hiding | High ground and attacking from hiding add dice; foes get an extra die when you're surrounded or they stand above you. |
 | Breaking away | Walking out of a foe's reach gives it a free blow; the path preview turns red. |

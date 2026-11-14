@@ -315,30 +315,26 @@ export function attack(G, rng) {
   return ok({ hits, sixes });
 }
 export const strikeLeft = G => (G.strike ? G.strike.hits + G.strike.crits + G.strike.minion : 0);
-// Spend on a foe in reach: a minion takes one hit (minion-only hits first); a big foe takes every
-// remaining hit, crits first, until it falls.
-export function spend(G, foeId, rng) {
+// Spend ONE hit on a foe in reach. kind: 'crit' | 'hit' | 'minion' (minion-only hits); omitted = auto:
+// minions take minion-only hits, then plain hits, then crits; elites and bosses take crits first.
+export function spend(G, foeId, rng, kind) {
   const f = G.foes.find(x => x.id === foeId && !x.dead);
   const st = G.strike;
   if (!f || !st || !strikeLeft(G)) return err('No hits to spend');
   if (!inReach(G, G.pos, f, heroReach(G))) return err(`${f.name} is out of reach`);
+  const big = f.type !== 'minion';
+  const have = { crit: st.crits, hit: st.hits, minion: big ? 0 : st.minion };
+  if (big && !st.hits && !st.crits) return err('Those hits only work on minions');
+  if (kind && !have[kind]) kind = null; // that kind ran out: fall back to auto
+  kind ||= (big ? ['crit', 'hit'] : ['minion', 'hit', 'crit']).find(k => have[k]);
   G.facing = null;
   fx(G, { t: 'face', id: 'hero', at: { x: f.x, y: f.y } });
   fx(G, { t: 'anim', id: 'hero', a: 'act' });
   if (heroReach(G) > 1) fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: G.hero.cls });
-  if (f.type === 'minion') {
-    if (st.minion) st.minion--; else if (st.hits) st.hits--; else st.crits--;
-    hitFoe(G, f, 1, rng);
-  } else {
-    if (!st.hits && !st.crits) return err('Those hits only work on minions');
-    while (!f.dead && (st.crits || st.hits)) {
-      const crit = st.crits > 0;
-      if (crit) st.crits--; else st.hits--;
-      hitFoe(G, f, 1, rng, { crit, mult: st.mult });
-    }
-  }
+  if (kind === 'crit') st.crits--; else if (kind === 'hit') st.hits--; else st.minion--;
+  hitFoe(G, f, 1, rng, { crit: kind === 'crit', mult: st.mult });
   if (!strikeLeft(G)) G.strike = null;
-  return ok();
+  return ok({ kind });
 }
 
 // ------------------------------------------------------------------ hero: powers

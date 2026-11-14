@@ -25,7 +25,7 @@ test('a scene starts with the first wave on the map and the hero at the entry', 
   assert.ok(G.waves.length >= 1, 'later waves pending');
 });
 
-test('attacks bank a pool of hits; minions take one, big foes take the rest', () => {
+test('attacks bank a pool of hits, spent one at a time', () => {
   const rng = rngFrom(3), G = R.newRun('Bo', 'ironclad', rng);
   R.startScene(G, rng);
   G.foes = [];
@@ -36,8 +36,11 @@ test('attacks bank a pool of hits; minions take one, big foes take the rest', ()
   G.turn.acted = 'attack';
   assert.ok(R.spend(G, 'minion' + (x - 1), rng).ok);
   assert.ok(G.foes[0].dead);
-  assert.ok(R.spend(G, 'elite' + x, rng).ok);
+  assert.ok(R.spend(G, 'elite' + x, rng).ok); // one hit at a time: the crit goes first on a big foe
   const s = R.heroStats(G);
+  assert.equal(G.foes[1].hp, 5000 - Math.round(s.damage * s.critMult * 0.8));
+  assert.equal(R.strikeLeft(G), 1);
+  assert.ok(R.spend(G, 'elite' + x, rng, 'hit').ok);
   assert.equal(G.foes[1].hp, 5000 - Math.round(s.damage * 0.8) - Math.round(s.damage * s.critMult * 0.8));
   assert.equal(R.strikeLeft(G), 0);
 });
