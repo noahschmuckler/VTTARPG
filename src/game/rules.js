@@ -487,7 +487,7 @@ function soloNotes(p, G) {
 }
 // The Vaultbreaker set power is "Vault" here: a short teleport with its ward and damage boost. A Shadowblade has a
 // Shadowstep already, so for them it folds into Shadowstep instead (adding the ward).
-SETS.vaultbreaker.power.name = 'Vault';
+SETS.vaultbreaker.power.name = 'Vault'; // already the ledger's name since ttarpg ceef925; kept so older ledgers agree
 export function powersOf(h) {
   const list = powersFor(h);
   const v = list.find(p => p.key === 'set:vaultbreaker');

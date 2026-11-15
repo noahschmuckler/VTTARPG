@@ -1,6 +1,6 @@
 # Delvers' Descent: notes for Claude
 
-- `src/ledger/` is a verbatim copy of `ttarpg/public/{engine,sets,adventure,merchant,art}.js` (last synced: ttarpg f285671,
+- `src/ledger/` is a verbatim copy of `ttarpg/public/{engine,sets,adventure,merchant,art}.js` (last synced: ttarpg ceef925,
   the 2026-11-15 playtest rules). Don't edit it here;
   change the rules in ttarpg and copy them over. Solo-only rules live in `src/game/rules.js` (`SOLO`, `SPECS`), which
   re-implements damage, wards, energy and the foe phase for the grid: when ttarpg changes those, port them there too.
