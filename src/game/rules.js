@@ -172,10 +172,12 @@ function hurtHero(G, amount, { ignoreArmor = false, from = null, label = '' } = 
   }
   return net;
 }
-function gainEnergy(G, n) {
+function gainEnergy(G, n, quiet = false) {
   const s = derive(G.hero), before = G.hero.energy;
   G.hero.energy = Math.max(0, Math.min(s.maxEnergy, G.hero.energy + n));
-  return G.hero.energy - before;
+  const d = G.hero.energy - before;
+  if (d) fx(G, { t: 'energy', id: G.hero.hid, n: d, quiet }); // the HUD and a floating "+7 ⚡" follow it
+  return d;
 }
 function heal(G, pct) {
   const m = derive(G.hero).maxHp, before = G.hero.hp;
@@ -408,6 +410,7 @@ const SPECS = {
   blink: { mode: 'tile', range: 6, any: true, text: 'Pick any square within 6, at any height.' },
   well: { mode: 'point', range: 8, sight: true, radius: 3, void: true, text: 'Pick a point within 8 in sight (a chasm works: foes are dragged over the edge).' },
   meteor: { mode: 'point', range: 10, radius: 2, text: 'Pick a point within 10.' },
+  'set:vaultbreaker': { mode: 'tile', range: 3, strike: true, text: 'Pick a square within 3, at any height.' },
   step: { mode: 'foe', range: 6, sight: false, strike: true, landing: true, text: 'Pick a foe within 6, then the square beside it to appear on; then attack.' },
   smoke: { mode: 'self', text: 'Vanish into smoke.' },
 };
@@ -428,7 +431,7 @@ const DESC = {
   step: 'Pick a foe within 6 squares and any free square beside it: you teleport there, with no free blows. Then attack in the same action for triple damage.',
   smoke: 'Become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
 };
-export const powerText = p => DESC[p.key] || p.text;
+export const powerText = p => (p.key === 'step' && p.vaultWard ? `${DESC.step} Vaultbreaker: you also gain a ${fmt(p.vaultWard)} ward.` : DESC[p.key] || p.text);
 export function powerSpec(G, p) {
   if (SPECS[p.key]) return SPECS[p.key];
   return { mode: 'self', text: soloNotes(p, G) || p.text };
@@ -443,7 +446,28 @@ function soloNotes(p, G) {
   }
   return out.join(' ');
 }
-export const powerList = G => powersFor(G.hero);
+// The Vaultbreaker set power is "Vault" here: a short teleport with its ward and damage boost. A Shadowblade has a
+// Shadowstep already, so for them it folds into Shadowstep instead (adding the ward).
+SETS.vaultbreaker.power.name = 'Vault';
+export function powersOf(h) {
+  const list = powersFor(h);
+  const v = list.find(p => p.key === 'set:vaultbreaker');
+  if (!v) return list;
+  const ward = v.effects.filter(e => e.kind === 'ward').reduce((t, e) => t + e.amount, 0);
+  const mult = Math.max(1, ...v.effects.filter(e => e.kind === 'buff').map(e => e.damageMult || 1));
+  const step = h.cls === 'shadowblade' && list.find(p => p.key === 'step');
+  if (step) {
+    step.effects = [...step.effects, { kind: 'ward', amount: ward, who: 'self' }];
+    step.cost = Math.max(5, step.cost - (SETS.vaultbreaker.power.cost - v.cost));
+    step.boosted = [...(step.boosted || []), `Vaultbreaker ×${v.pieces} (+${ward} ward)`];
+    step.vaultWard = ward;
+    return list.filter(p => p !== v);
+  }
+  v.attack = false;
+  v.text = `Vault up to 3 squares, to any height and over anything, with no free blows, and gain a ${fmt(ward)} ward.${mult > 1 ? ` Then attack in the same action for ×${mult} damage.` : ' Then attack in the same action.'}`;
+  return list;
+}
+export const powerList = G => powersOf(G.hero);
 export function powerUsable(G, p) {
   if (G.stage !== 'scene' || G.pit || G.hero.hp <= 0) return false;
   if (G.hero.energy < p.cost) return false;
@@ -499,6 +523,7 @@ export function usePower(G, keyName, target, rng) {
     if (!foes.length) return err('Pick a target in range');
   }
   G.hero.energy -= p.cost;
+  fx(G, { t: 'energy', id: G.hero.hid, n: -p.cost, quiet: true });
   // attack powers and move-and-strike powers (Leaping Strike, Grapple Line, Shadowstep) leave the attack open
   const strikes = p.attack || !!S.strike;
   G.turn.acted = strikes ? 'attackPower' : 'power';
@@ -515,10 +540,10 @@ export function usePower(G, keyName, target, rng) {
   };
   // positional class powers
   switch (keyName) {
-    case 'leap': case 'grapple': case 'blink': {
+    case 'leap': case 'grapple': case 'blink': case 'set:vaultbreaker': {
       const from = { ...G.pos };
       G.pos = at;
-      fx(G, { t: 'move', id: G.hero.hid, path: [from, at], kind: keyName === 'blink' ? 'blink' : 'leap' });
+      fx(G, { t: 'move', id: G.hero.hid, path: [from, at], kind: keyName === 'blink' || keyName === 'set:vaultbreaker' ? 'blink' : 'leap' });
       break;
     }
     case 'vanish': {
@@ -893,8 +918,9 @@ function announceUnlocks(G) {
       log(G, `✦ Hidden synergy discovered: ${sy.name}.`, 'loot');
     } else {
       const S = SETS[id], bonus = S.bonuses.find(b => b.n === Number(n));
-      const pw = powersFor(ch).find(p => p.key === S.power.key);
-      const text = Number(n) === 1 ? `New power: ${S.power.name}. ${pw?.text || ''}` : `${S.power.name} grows stronger (${n} pieces).${bonus ? ' ' + statsText(bonus.stats) + '.' : ''}`;
+      const pw = powersOf(ch).find(p => p.key === S.power.key);
+      const folded = id === 'vaultbreaker' && ch.cls === 'shadowblade';
+      const text = folded && Number(n) === 1 ? `Shadowstep now also gives you a ward (${fmt(powersOf(ch).find(p => p.key === 'step')?.vaultWard || 0)}).` : Number(n) === 1 ? `New power: ${S.power.name}. ${pw?.text || ''}` : `${S.power.name} grows stronger (${n} pieces).${bonus ? ' ' + statsText(bonus.stats) + '.' : ''}`;
       fx(G, { t: 'unlock', kind: 'set', set: id, title: `${ch.name}: ${Number(n) === 1 ? S.power.name : `${S.name} ×${n}`}`, text });
     }
   }
@@ -1071,7 +1097,7 @@ function endRound(G, rng) {
   G.stats.rounds++;
   arriveWaves(G, rng);
   let e = 0;
-  for (const h of standing(G)) { e = withHero(G, h, () => gainEnergy(G, derive(h).energyPerRound)); h.turn = freshTurnFor(h); }
+  for (const h of standing(G)) { e = withHero(G, h, () => gainEnergy(G, derive(h).energyPerRound, true)); h.turn = freshTurnFor(h); }
   for (const h of G.party) if (h.hp <= 0) h.turn = { move: 0, acted: 'down', ware: true };
   // start the round with the first hero still standing
   G.active = Math.max(0, G.party.findIndex(h => h.hp > 0));

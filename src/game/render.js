@@ -175,6 +175,11 @@ export class View {
         return this.wait(isHeroId(e.id) ? 0.32 : 0.12); // a beat per blow on the hero, so each one reads
       }
       case 'heal': { const d = this.ensure(e.id); if (d) { this.float(d, `+${fmt(e.n)}`, '#7ee07e', 1.1); if (!isHeroId(e.id)) d.hp = Math.min(d.maxHp, d.hp + e.n); this.ring(d, '#7ee07e', 0.6); } return this.wait(0.1); }
+      case 'energy': { // energy gained from kills and the like floats up in blue; costs and round income just move the bar
+        if (e.quiet) return;
+        const d = this.ensure(e.id); if (d) this.float(d, `${e.n > 0 ? '+' : '−'}${Math.abs(e.n)} ⚡`, e.n > 0 ? '#8cc4ff' : '#b0a0ff', 0.95, -30);
+        return this.wait(0.06);
+      }
       case 'ward': { const d = this.ensure(e.id); this.float(d, `+${fmt(e.n)} ward`, '#f3d98e', 1); this.ring(d, '#f3d98e', 0.7); return this.wait(0.1); }
       case 'text': { const d = this.ensure(e.id); if (d) this.float(d, e.text, e.color || '#fff', 0.9); return this.wait(0.05); }
       case 'die': {

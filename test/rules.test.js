@@ -222,3 +222,28 @@ test('Shadowstep lands on the square beside the target that the player picks', (
   assert.deepEqual(G.pos, { x: x - 4, y: y - 2 });
   assert.ok(R.canAttack(G), 'and the attack is open');
 });
+
+test('every kill grants energy; Vault moves; a Shadowblade folds it into Shadowstep', () => {
+  const rng = rngFrom(71), G = R.newRun([{ cls: 'arcanist' }, { cls: 'shadowblade' }], rng);
+  R.startScene(G, rng);
+  const { x, y } = G.pos;
+  for (let i = 1; i <= 7; i++) Object.assign(tile(G.map, x - i, y), { kind: i === 5 ? 'chasm' : 'floor', prop: null, e: 0 });
+  G.foes = [{ id: 'm', name: 'Grunt', type: 'minion', x: x - 3, y, hp: 1, maxHp: 1, armor: 0, damage: 60, attacks: 1, move: 4, reach: 1, abilities: [] },
+    { id: 'n', name: 'Grunt', type: 'minion', x: 1, y: 1, hp: 1, maxHp: 1, armor: 0, damage: 60, attacks: 1, move: 4, reach: 1, abilities: [] }];
+  G.waves = []; G.hero.energy = 60;
+  R.usePower(G, 'well', { x: x - 5, y }, rng);
+  assert.equal(G.hero.energy, 60 - 45 + R.heroStats(G).energyPerKill, 'the chasm kill paid energy');
+  const vault = { id: 'vb', name: 'Vaultbreaker Dirks', base: 'x', slot: 'weapon', rarity: 'set', set: 'vaultbreaker', stats: { damage: 10 } };
+  G.party[0].gear.weapon = vault;
+  const v = R.powerList(G).find(p => p.key === 'set:vaultbreaker');
+  assert.equal(v.name, 'Vault');
+  G.turn.acted = null; G.hero.energy = 100;
+  const spot = R.powerTargets(G, v)[0];
+  assert.ok(R.usePower(G, 'set:vaultbreaker', spot, rng).ok);
+  assert.deepEqual(G.pos, { x: spot.x, y: spot.y });
+  assert.ok(G.hero.ward > 0 && R.canAttack(G));
+  delete G.party[0].gear.weapon; G.party[1].gear.weapon = vault; R.selectHero(G, 1);
+  const list = R.powerList(G);
+  assert.ok(!list.some(p => p.key === 'set:vaultbreaker'), 'no separate power for the Shadowblade');
+  assert.ok(list.find(p => p.key === 'step').effects.some(e => e.kind === 'ward'), 'Shadowstep gains the ward');
+});

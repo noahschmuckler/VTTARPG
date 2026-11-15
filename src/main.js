@@ -255,7 +255,7 @@ async function act(fn, { quiet = false } = {}) {
   if (sel) clearSel();
   if (mode.kind === 'ware') mode = { kind: 'idle' };
   busy = true;
-  shown = view.shown = Object.fromEntries(G.party.map(h => [h.hid, { hp: h.hp, ward: h.ward || 0 }])); // the HUD follows the effects, not the final state
+  shown = view.shown = Object.fromEntries(G.party.map(h => [h.hid, { hp: h.hp, ward: h.ward || 0, energy: h.energy }])); // the HUD follows the effects, not the final state
   const r = fn();
   if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; shown = view.shown = null; refresh(); return r; }
   refresh();
@@ -278,6 +278,7 @@ async function playFx() {
       if (e.t === 'dmg') { sh.hp = Math.max(0, sh.hp - e.n); sh.ward = Math.max(0, sh.ward - (e.warded || 0)); }
       if (e.t === 'heal') sh.hp += e.n;
       if (e.t === 'ward') sh.ward += e.n;
+      if (e.t === 'energy') sh.energy += e.n;
       if (e.t === 'revive') { const h = G.party.find(q => q.hid === e.id); sh.hp = h.hp; }
     }
     switch (e.t) {
@@ -352,7 +353,7 @@ async function showDice(e) {
 function refresh(light = false) {
   if (!G || !G.map) return;
   const sh = shown?.[G.hero.hid];
-  const s = R.heroStats(G), h = sh ? { ...G.hero, hp: Math.min(sh.hp, R.heroStats(G).maxHp), ward: sh.ward } : G.hero;
+  const s = R.heroStats(G), h = sh ? { ...G.hero, hp: Math.min(sh.hp, R.heroStats(G).maxHp), ward: sh.ward, energy: Math.max(0, Math.min(sh.energy, R.heroStats(G).maxEnergy)) } : G.hero;
   partyStrip();
   // orbs
   $('#orbHp').style.setProperty('--pct', `${(h.hp / s.maxHp) * 100}%`);
@@ -825,7 +826,7 @@ function showLoot() {
 }
 function abilityRows(who = G.active) {
   const hero = G.party[who];
-  const pw = R.powersFor(hero).map(p => {
+  const pw = R.powersOf(hero).map(p => {
     const spec = R.powerSpec(G, p), how = R.powerText(p) === p.text && spec.text !== p.text ? spec.text : '';
     const tag = p.attack ? 'attack power' : spec.strike ? 'move + strike' : p.set ? `${R.SETS[p.set].name} set (${p.pieces} piece${p.pieces > 1 ? 's' : ''})` : R.CLASSES[hero.cls].name;
     return `<div class="abil" style="${p.set ? `border-left-color:${R.SETS[p.set].color}` : ''}"><b>${esc(p.name)}</b> <span class="dim">${p.cost} energy · ${esc(tag)}</span><div>${esc(R.powerText(p))}</div>${how ? `<div class="how">▸ ${esc(how)}</div>` : ''}${p.boosted?.length ? `<div class="dim">Boosted by ${esc(p.boosted.join(', '))}</div>` : ''}</div>`;
@@ -1036,7 +1037,7 @@ function help(after) {
     <h3>Your party</h3><p>Pick 1 to 4 heroes on the title screen; you control them all. Each hero gets their own move and action every round, in any order: tap a hero (on the map or in the party strip) to take control, or press <b>Next</b> (<kbd>Tab</kbd>). When everyone is done, <b>End round</b>: each foe goes for the nearest hero it can reach (Iron Bulwark makes them fight the Ironclad). A hero at 0 health is <b>down</b> until the scene is clear, then gets back up with ${Math.round(R.SOLO.revive * 100)}% health; the run only ends if the whole party falls. Gear, the satchel, Favour and wares are shared; equip anything on anyone. <b>Party gear</b> (🎒) lays every hero's gear side by side: tap an item to see what it would do on each hero, including any set power or synergy it would unlock or break, then tap to move or swap it. Its synergy tracker shows how close each hero is to every synergy.</p>
     <h3>Your turn</h3><p>A <b>move</b> and <b>one action</b> (Attack, a Power, or Sprint), in any order. Blue squares show where you can walk. Climbing one level costs an extra square; rough ground costs 2. Ledges two levels high need a leap, grapple or teleport.</p>
     <h3>Attacking</h3><p>Click a foe with a red ring (in reach), or press <kbd>A</kbd>. You roll your <b>dice pool</b> of d6s: every 4+ is a hit, every 6 a crit. The hits form a pool you spend one at a time by clicking foes in reach (pick Crit or Hit in the panel, or leave it on Auto); unspent hits stay until you end your turn, so you can move and keep striking: each hit kills a minion or deals your damage per hit to an elite or boss (a crit multiplies it). Damage per hit is reduced by the foe's armor. <b>High ground</b> (you stand above a foe in reach) adds a die; attacking <b>from hiding</b> adds 3.</p>
-    <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
+    <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill, however the foe dies (an attack, a power, a fall into a chasm): a blue +N ⚡ shows each one. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
     <p>Tapping a power or ware never fires it straight away: a panel shows what it does, and it only happens when you confirm (Use, Confirm, or picking a target). Every ability you have is described under Gear.</p>
     <h3>Breaking away</h3><p>Walking away from a foe beside you gives it a <b>free blow</b> (the path turns red). Leaps, teleports and Vanish avoid it.</p>
     <h3>Defending</h3><p>In the enemy phase each foe rolls one die per attack: every 1–3 lands (1–2 if your armor is 30%+). You take an extra die when <b>surrounded</b> (3+ foes beside you) or attacked <b>from higher ground</b>. Armor reduces the damage; a <b>ward</b> soaks the rest.</p>
