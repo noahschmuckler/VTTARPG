@@ -117,9 +117,11 @@ export class View {
         const h = d.hero ? 78 : Math.min(130, 58 * (u.scale || 1)), half = d.hero ? 20 : Math.min(48, 20 * (u.scale || 1));
         if (Math.abs(w.x - c.x) > half || w.y > c.y + 12 || w.y < c.y - h) continue;
         const score = (d.hero ? 1000 : 0) + Math.hypot(w.x - c.x, w.y - (c.y - h / 2));
-        if (!hit || score < hit.score) hit = { score, x: Math.round(d.x), y: Math.round(d.y) };
+        if (!hit || score < hit.score) hit = { score, hero: d.hero, x: Math.round(d.x), y: Math.round(d.y) };
       }
-      if (hit) return { x: hit.x, y: hit.y };
+      // a foe's body always wins; a hero's only when the square under the tap isn't an empty one you might be aiming at
+      const emptyBest = best && ![...this.disp.values()].some(d => d.alpha >= 0.3 && Math.round(d.x) === best.x && Math.round(d.y) === best.y);
+      if (hit && !(hit.hero && emptyBest)) return { x: hit.x, y: hit.y };
     }
     return best;
   }
@@ -175,12 +177,13 @@ export class View {
         return this.wait(isHeroId(e.id) ? 0.32 : 0.12); // a beat per blow on the hero, so each one reads
       }
       case 'heal': { const d = this.ensure(e.id); if (d) { this.float(d, `+${fmt(e.n)}`, '#7ee07e', 1.1); if (!isHeroId(e.id)) d.hp = Math.min(d.maxHp, d.hp + e.n); this.ring(d, '#7ee07e', 0.6); } return this.wait(0.1); }
+      case 'wardfade': { const d = this.ensure(e.id); if (d) this.float(d, 'Wards fade', '#c9b77a', 0.8, -20); return; }
       case 'energy': { // energy gained from kills and the like floats up in blue; costs and round income just move the bar
         if (e.quiet) return;
         const d = this.ensure(e.id); if (d) this.float(d, `${e.n > 0 ? '+' : '−'}${Math.abs(e.n)} ⚡`, e.n > 0 ? '#8cc4ff' : '#b0a0ff', 0.95, -30);
         return this.wait(0.06);
       }
-      case 'ward': { const d = this.ensure(e.id); this.float(d, `+${fmt(e.n)} ward`, '#f3d98e', 1); this.ring(d, '#f3d98e', 0.7); return this.wait(0.1); }
+      case 'ward': { const d = this.ensure(e.id); if (!d) return; this.float(d, e.n > 0 ? `+${fmt(e.n)} ${e.rune ? 'rune ward' : 'ward'}` : 'Ward held', e.rune ? '#5fd3c4' : '#f3d98e', 1); this.ring(d, e.rune ? '#5fd3c4' : '#f3d98e', 0.7); return this.wait(0.1); }
       case 'text': { const d = this.ensure(e.id); if (d) this.float(d, e.text, e.color || '#fff', 0.9); return this.wait(0.05); }
       case 'die': {
         const d = this.ensure(e.id); if (!d) return;
@@ -525,7 +528,7 @@ export class View {
       g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(c.x - w / 2 - 1, top - 1, w + 2, big ? 7 : 5);
       g.fillStyle = u.type === 'boss' ? '#d8352a' : u.type === 'elite' ? '#e8902a' : '#c44';
       g.fillRect(c.x - w / 2, top, w * Math.max(0, hp / u.maxHp), big ? 5 : 3);
-      const badges = [u.pinned && '📌', u.enraged && '♨'].filter(Boolean).join('');
+      const badges = [u.pinned && '📌', u.enraged && '♨', u.brand && 'ᛟ'].filter(Boolean).join('');
       if (big || badges) {
         g.font = '600 11px "Cinzel", Georgia, serif'; g.textAlign = 'center';
         g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.8)';
@@ -535,7 +538,7 @@ export class View {
     }
     if (isHero) {
       const sh = this.shown?.[H.hid];
-      const hp = sh ? sh.hp : H.hp, ward = sh ? sh.ward : H.ward; // while effects play, follow them rather than the final state
+      const hp = sh ? sh.hp : H.hp, ward = sh ? sh.ward + (sh.rune || 0) : (H.ward || 0) + (H.rune || 0); // while effects play, follow them rather than the final state
       const mx = derive(H).maxHp;
       if (G.party.length > 1 || hp < mx) { // a small health bar over each hero
         const w = 40;

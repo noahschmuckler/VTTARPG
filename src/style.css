@@ -379,3 +379,13 @@ kbd { font: 11px var(--sans); padding: 0 4px; border: 1px solid var(--edge); bor
   #targeting { bottom: calc(var(--dock, 180px) + 4px); max-height: 34vh; overflow: auto; }
   #targeting .desc { font-size: 12.5px; }
 }
+
+/* the Runepriest's reactions */
+#reactions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; align-items: center; }
+#reactions:empty { display: none; }
+#reactions .rxlab { font: 600 12.5px var(--serif); color: #5fd3c4; }
+#reactions button { padding: 3px 9px; font-size: 12.5px; border-color: #2f7a72; }
+#reactions button small { color: #9fe6dc; }
+#reactions .toggle { opacity: 0.6; } #reactions .toggle.on { opacity: 1; box-shadow: inset 0 0 0 1px #5fd3c4; }
+@media (max-width: 700px) { #reactions button { min-height: 36px; flex: 0 0 auto; } }
+.die.land.crit { background: #ff5a2a; box-shadow: 0 0 16px #ff2a0a, inset 0 -3px 0 #0003; }

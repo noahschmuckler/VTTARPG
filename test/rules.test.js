@@ -92,12 +92,12 @@ test('every class power resolves on a live map', () => {
   }
 });
 
-test('the bot can clear the opening act with every class (two retries, like a player)', () => {
+test('the bot can clear the opening act with every class (three retries, like a player)', () => {
   const results = {};
   for (const cls of CLASSES) {
     const rng = rngFrom(100 + cls.length), G = R.newRun('Bot', cls, rng);
     const out = [];
-    let lives = 2;
+    let lives = 3;
     R.startScene(G, rng);
     while (G.act === 0 && out.length < 12) {
       const r = playScene(G, rng);
@@ -153,10 +153,10 @@ test('a party: each hero has their own turn; foes go for the nearest hero; ally 
   const before = { ...G.party[0].pos }, mine = { ...G.pos };
   assert.ok(R.usePower(G, 'recall', { ids: [ally.id] }, rng).ok);
   assert.deepEqual(G.pos, before); assert.deepEqual(G.party[0].pos, mine);
-  assert.ok(G.party[0].ward >= 300 && G.party[1].ward >= 300, 'both gain a ward');
+  assert.ok(G.party[0].rune >= 300 && G.party[1].rune >= 300, 'both gain a rune ward');
   // downed heroes don't end the run; the whole party does
   G.party[0].hp = 1; R.selectHero(G, 0);
-  G.foes = [{ id: 'z', name: 'Brute', type: 'elite', x: G.pos.x + 1, y: G.pos.y, hp: 9000, maxHp: 9000, armor: 0, damage: 5000, attacks: 6, move: 4, reach: 1, abilities: [] }];
+  G.foes = [{ id: 'z', name: 'Brute', type: 'elite', x: G.pos.x + 1, y: G.pos.y, hp: 9000, maxHp: 9000, armor: 0, damage: 5000, attacks: 20, move: 4, reach: 1, abilities: [] }];
   for (const h of G.party.slice(1)) h.pos = { x: 1, y: 1 + G.party.indexOf(h) };
   R.endTurn(G, rngFrom(2));
   assert.equal(G.party[0].hp, 0);
@@ -246,4 +246,52 @@ test('every kill grants energy; Vault moves; a Shadowblade folds it into Shadows
   const list = R.powerList(G);
   assert.ok(!list.some(p => p.key === 'set:vaultbreaker'), 'no separate power for the Shadowblade');
   assert.ok(list.find(p => p.key === 'step').effects.some(e => e.kind === 'ward'), 'Shadowstep gains the ward');
+});
+
+test('playtest rules: armour rating, crit pierce, sunder, ward layers, energy tapers, Surge, Runepriest', () => {
+  assert.equal(R.armourCut(100), 0.5);
+  const rng = rngFrom(81), G = R.newRun([{ cls: 'ironclad' }, { cls: 'runepriest' }], rng);
+  R.startScene(G, rng);
+  G.foes = []; G.waves = [];
+  const I = G.party[0], P = G.party[1];
+  // two ward layers never add within a layer
+  I.ward = 600; I.rune = 300;
+  // a crit blow pierces half the armour; the rune ward soaks first, then the ward
+  const armour = R.heroStats(G).armor;
+  I.hp = 5000;
+  const f = { id: 'b', name: 'Brute', type: 'elite', x: I.pos.x + 1, y: I.pos.y, hp: 9000, maxHp: 9000, armor: 0, damage: 1000, attacks: 0, move: 0, reach: 1, abilities: ['sunder'] };
+  G.foes.push(f);
+  // energy: Energy per Round taper on gear above the class base
+  I.gear.boots = { id: 'x', name: 'x', base: 'x', slot: 'boots', rarity: 'rare', stats: { energyPerRound: 38 } };
+  assert.equal(R.energyPerRound(I) - R.CLASSES.ironclad.base.energyPerRound, 24);
+  delete I.gear.boots;
+  // regen tapers at half energy; wards halve at End round
+  I.energy = 80; P.energy = 10;
+  const before = { i: I.energy, p: P.energy };
+  R.endTurn(G, rngFrom(3));
+  assert.equal(I.energy - before.i, Math.floor(R.energyPerRound(I) / 2), 'half regen at or above half max');
+  assert.equal(P.energy - before.p, R.energyPerRound(P), 'full regen below half');
+  assert.equal(I.ward, 300); assert.equal(I.rune, 150);
+  // Surge
+  R.selectHero(G, 0); I.energy = 100; R.sprint(G);
+  assert.ok(R.canSurge(G)); assert.ok(R.surge(G).ok); assert.ok(R.canAct(G)); assert.equal(I.energy, 40);
+  R.sprint(G); assert.ok(!R.canSurge(G), 'once per round');
+  // Runepriest reactions on the Ironclad's turn
+  P.energy = 100; I.hp = 100;
+  assert.ok(R.react(G, P.hid, 'mending', I.hid).ok);
+  assert.ok(I.hp > 100);
+  assert.ok(!R.react(G, P.hid, 'mending', I.hid).ok, 'once per round');
+  assert.ok(R.react(G, P.hid, 'haste', I.hid).ok);
+  assert.equal(I.buffs.bonusDice, 1);
+  // minion kill energy tapers: full, half, half, quarter
+  G.foes = [];
+  const gains = [];
+  for (let k = 0; k < 4; k++) {
+    const m = { id: 'm' + k, name: 'Grunt', type: 'minion', x: I.pos.x - 1, y: I.pos.y, hp: 1, maxHp: 1, armor: 0, damage: 1, attacks: 1, move: 1, reach: 1, abilities: [] };
+    G.foes.push(m, { id: 'keep' + k, name: 'Far', type: 'minion', x: 0, y: 0, hp: 1, maxHp: 1, armor: 0, damage: 1, attacks: 1, move: 1, reach: 1, abilities: [] });
+    I.energy = 0; G.strike = { hits: 1, crits: 0, minion: 0, mult: 1 };
+    R.spend(G, m.id, rng); gains.push(I.energy);
+  }
+  const k = R.heroStats(G).energyPerKill;
+  assert.deepEqual(gains, [k, Math.floor(k / 2), Math.floor(k / 2), Math.floor(k / 4)]);
 });

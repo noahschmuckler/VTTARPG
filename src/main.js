@@ -14,6 +14,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const SAVE = 'delvers-descent-v2'; // v2: parties
 const RC = { common: 'var(--common)', magic: 'var(--magic)', rare: 'var(--rare)', legendary: 'var(--legendary)' };
+const armourText = rating => `${rating} (${Math.round(R.armourCut(rating) * 100)}%)`; // armour is a rating; the % is what it blocks
 const rarityColor = it => (it.set ? R.SETS[it.set].color : RC[it.rarity] || 'var(--common)');
 
 let G = null, rng = rngFrom(Date.now() & 0xffffffff), view, busy = false, mode = { kind: 'idle' }, speed = 1, hover = null;
@@ -143,7 +144,7 @@ function titleScreen() {
       <div class="pc" data-cls="${k}"></div>
       <h3 style="color:${HERO_COLOR[k]}">${C.glyph} ${esc(C.name)}</h3>
       <div class="role">${esc(C.role)}</div>
-      <div class="stats"><span>❤ ${fmt(C.base.maxHp)}</span><span>⛨ ${C.base.armor}%</span><span>⚄ ${C.base.dice} dice</span><span>⚔ ${fmt(C.base.damage)}</span><span>➜ move ${C.base.move}</span><span>◎ ${C.base.reach ? 'reach ' + C.base.reach : 'melee'}</span></div>
+      <div class="stats"><span>❤ ${fmt(C.base.maxHp)}</span><span>⛨ ${armourText(C.base.armor)}</span><span>⚄ ${C.base.dice} dice</span><span>⚔ ${fmt(C.base.damage)}</span><span>➜ move ${C.base.move}</span><span>◎ ${C.base.reach ? 'reach ' + C.base.reach : 'melee'}</span></div>
       <ul>${C.abilities.map(a => `<li title="${esc(a.text)}"><b>${esc(a.name)}</b> <span class="dim">${a.cost}</span></li>`).join('')}</ul>
     </div>`).join('');
   const savedParty = saved ? saved.G.party.map(h => h.name).join(', ') : '';
@@ -255,7 +256,7 @@ async function act(fn, { quiet = false } = {}) {
   if (sel) clearSel();
   if (mode.kind === 'ware') mode = { kind: 'idle' };
   busy = true;
-  shown = view.shown = Object.fromEntries(G.party.map(h => [h.hid, { hp: h.hp, ward: h.ward || 0, energy: h.energy }])); // the HUD follows the effects, not the final state
+  shown = view.shown = Object.fromEntries(G.party.map(h => [h.hid, { hp: h.hp, ward: h.ward || 0, rune: h.rune || 0, energy: h.energy }])); // the HUD follows the effects, not the final state
   const r = fn();
   if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; shown = view.shown = null; refresh(); return r; }
   refresh();
@@ -275,9 +276,10 @@ async function playFx() {
     const e = G.fx.shift();
     const sh = shown && shown[e.id];
     if (sh) {
-      if (e.t === 'dmg') { sh.hp = Math.max(0, sh.hp - e.n); sh.ward = Math.max(0, sh.ward - (e.warded || 0)); }
+      if (e.t === 'dmg') { sh.hp = Math.max(0, sh.hp - e.n); sh.ward = Math.max(0, sh.ward - (e.normal ?? e.warded ?? 0)); sh.rune = Math.max(0, sh.rune - (e.rune || 0)); }
       if (e.t === 'heal') sh.hp += e.n;
-      if (e.t === 'ward') sh.ward += e.n;
+      if (e.t === 'ward') { if (e.rune) sh.rune += e.n; else sh.ward += e.n; }
+      if (e.t === 'wardfade') { sh.ward = e.ward; sh.rune = e.rune; }
       if (e.t === 'energy') sh.energy += e.n;
       if (e.t === 'revive') { const h = G.party.find(q => q.hid === e.id); sh.hp = h.hp; }
     }
@@ -335,9 +337,9 @@ async function showDice(e) {
   const el = $('#dice');
   let res;
   if (e.defense) {
-    const landed = e.dice.filter(d => d <= e.landOn).length;
-    res = `${landed ? `<span style="color:var(--bad)">${landed} blow${landed > 1 ? 's' : ''} land</span>` : '<span style="color:var(--good)">All blocked</span>'} <span class="dim">(lands on 1–${e.landOn})</span>`;
-    el.innerHTML = `<div class="who">${esc(e.label)}</div><div class="row">${e.dice.map(d => dieHTML(d, d <= e.landOn ? 'land' : 'miss')).join('')}</div><div class="res">${res}</div>`;
+    const landed = e.dice.filter(d => d >= e.hitOn).length, crits = e.dice.filter(d => d === 6).length;
+    res = `${landed ? `<span style="color:var(--bad)">${landed} blow${landed > 1 ? 's' : ''} land${crits ? `, ${crits} crit${crits > 1 ? 's' : ''}` : ''}</span>` : '<span style="color:var(--good)">All blocked</span>'} <span class="dim">(hits on ${e.hitOn}+, 6 crits)</span>`;
+    el.innerHTML = `<div class="who">${esc(e.label)}</div><div class="row">${e.dice.map(d => dieHTML(d, d === 6 ? 'land crit' : d >= e.hitOn ? 'land' : 'miss')).join('')}</div><div class="res">${res}</div>`;
   } else {
     const need = e.hitOn || 4;
     const hits = e.dice.filter(d => d >= need).length, sixes = e.dice.filter(d => d === 6).length;
@@ -353,18 +355,19 @@ async function showDice(e) {
 function refresh(light = false) {
   if (!G || !G.map) return;
   const sh = shown?.[G.hero.hid];
-  const s = R.heroStats(G), h = sh ? { ...G.hero, hp: Math.min(sh.hp, R.heroStats(G).maxHp), ward: sh.ward, energy: Math.max(0, Math.min(sh.energy, R.heroStats(G).maxEnergy)) } : G.hero;
+  const s = R.heroStats(G), h = sh ? { ...G.hero, hp: Math.min(sh.hp, R.heroStats(G).maxHp), ward: sh.ward, rune: sh.rune, energy: Math.max(0, Math.min(sh.energy, R.heroStats(G).maxEnergy)) } : G.hero;
   partyStrip();
   // orbs
   $('#orbHp').style.setProperty('--pct', `${(h.hp / s.maxHp) * 100}%`);
   $('#orbEn').style.setProperty('--pct', `${(h.energy / s.maxEnergy) * 100}%`);
   $('#orbHp .fill').style.height = `${(h.hp / s.maxHp) * 100}%`;
   $('#orbHp span').textContent = `${fmt(h.hp)}\n/ ${fmt(s.maxHp)}`;
-  $('#orbHp .ward').style.boxShadow = h.ward > 0 ? `inset 0 0 0 ${Math.min(innerWidth < 700 ? 3 : 10, 3 + h.ward / 150)}px var(--brass2)` : 'none';
+  const wsum = (h.ward || 0) + (h.rune || 0);
+  $('#orbHp .ward').style.boxShadow = wsum > 0 ? `inset 0 0 0 ${Math.min(innerWidth < 700 ? 3 : 10, 3 + wsum / 150)}px var(--brass2)` : 'none';
   const wn = $('#wardNum');
-  wn.hidden = !(h.ward > 0);
-  wn.textContent = `🛡 ${fmt(h.ward || 0)} ward`;
-  $('#orbHp').title = `Health ${fmt(h.hp)} / ${fmt(s.maxHp)}${h.ward ? ` · Ward ${fmt(h.ward)}` : ''} · Armor ${s.armor}%`;
+  wn.hidden = !(wsum > 0);
+  wn.textContent = [h.ward > 0 && `🛡 ${fmt(h.ward)}`, h.rune > 0 && `ᛟ ${fmt(h.rune)} rune`].filter(Boolean).join(' · ') + (h.rune > 0 ? '' : ' ward');
+  $('#orbHp').title = `Health ${fmt(h.hp)} / ${fmt(s.maxHp)}${h.ward ? ` · Ward ${fmt(h.ward)}` : ''}${h.rune ? ` · Rune ward ${fmt(h.rune)}` : ''} · Armour ${armourText(s.armor)}`;
   $('#orbEn .fill').style.height = `${(h.energy / s.maxEnergy) * 100}%`;
   $('#orbEn span').textContent = `${h.energy}\n/ ${s.maxEnergy}`;
   $('#orbEn').title = `Energy: +${s.energyPerRound} per round, +${s.energyPerKill} per kill`;
@@ -395,6 +398,7 @@ function refresh(light = false) {
   else {
     btn(`⚔ ${G.turn.acted === 'attackPower' ? 'Strike' : 'Attack'} <small>${R.attackPool(G).total}d6</small>`, inReach ? 'Roll your dice pool; every 4+ is a hit you can spend on foes in reach (A). Or just click a foe in reach.' : 'No foe in reach', R.canAttack(G) && inReach && !R.strikeLeft(G), () => act(() => R.attack(G, rng)));
     btn('» Sprint', `Your action: +${s.move} move (S)`, R.canAct(G), () => act(() => R.sprint(G)));
+    if (G.turn.acted && !G.turn.surged && G.turn.acted !== 'down') btn(`⚡ Surge <small>${R.ENERGY.surge}</small>`, `Once per round: spend ${R.ENERGY.surge} energy to take another action`, R.canSurge(G), () => act(() => R.surge(G)));
   }
   if (!G.cleared && G.party.length > 1) {
     const nxt = nextHero();
@@ -431,6 +435,28 @@ function refresh(light = false) {
     if (mode.kind === 'ware' && mode.w.key === w.key) b.classList.add('active');
     b.onclick = () => { if (mode.kind === 'ware' && mode.w.id === w.id) return cancelMode(); mode = { kind: 'ware', w, opened: performance.now() }; refresh(); };
     wa.appendChild(b);
+  }
+  // the Runepriest's reactions: on another hero's turn, his runes can help them (free, from his energy, once each per round)
+  const rx = $('#reactions');
+  rx.innerHTML = '';
+  const priest = R.priestsOf(G).find(p => p !== G.hero);
+  if (priest && !G.cleared) {
+    const list = R.reactionsFor(G, priest, G.hero);
+    rx.insertAdjacentHTML('beforeend', `<span class="rxlab">ᛟ ${esc(priest.name)} <small>${priest.energy}⚡</small></span>`);
+    for (const r of list) {
+      const b = document.createElement('button');
+      b.innerHTML = `${esc(r.name.replace('Rune of ', ''))} <small>${r.cost}</small>`;
+      b.title = `${r.name} (${r.cost} energy, free, once per round): ${r.text}${r.why ? `\nNot now: ${r.why}` : ''}`;
+      b.disabled = busy || !r.ok;
+      b.onclick = () => act(() => R.react(G, priest.hid, r.key, G.hero.hid));
+      rx.appendChild(b);
+    }
+    const t = document.createElement('button');
+    t.className = 'toggle' + (priest.turningOff ? '' : ' on');
+    t.innerHTML = `Turning ${priest.turningOff ? 'off' : 'armed'}`;
+    t.title = `${R.REACTIONS.turning.name} (${R.REACTIONS.turning.cost} energy, once per round): ${R.REACTIONS.turning.text}`;
+    t.onclick = () => { R.setTurning(G, priest.hid, !!priest.turningOff); save(); refresh(); };
+    rx.appendChild(t);
   }
   // strike pool
   const st = $('#strike');
@@ -523,7 +549,7 @@ function foeInfo(f) {
     const reach = R.inReach(G, G.pos, f, R.heroReach(G));
     tip.innerHTML = `<b>${esc(f.name)}</b> <span class="dim">${ENEMY_TYPES[f.type].label}${f.pinned ? ' · Pinned' : ''}${f.enraged ? ' · Enraged' : ''}</span>
       ${f.type !== 'minion' ? `<div class="hpbar"><i style="width:${(f.hp / f.maxHp) * 100}%"></i></div>${fmt(f.hp)} / ${fmt(f.maxHp)} health · armor ${f.armor}%` : '<div>Dies to any hit</div>'}
-      <div>${D.n} attack${D.n === 1 ? '' : 's'} × ${fmt(f.damage)} · lands on 1–${D.landOn} · ${f.reach > 1 ? `ranged ${f.reach}` : 'melee'} · move ${f.move}</div>
+      <div>${D.n} attack${D.n === 1 ? '' : 's'} × ${fmt(f.damage)} · hits on ${D.hitOn}+, 6 crits ×${f.critMult || ({ minion: 1.5, elite: 2, boss: 2.5 })[f.type]} · ${f.reach > 1 ? `ranged ${f.reach}` : 'melee'} · move ${f.move}</div>
       ${f.type !== 'minion' ? `<div class="dim">Your hit: ${fmt(Math.round(s.damage * (1 - f.armor / 100)))} (crit ${fmt(Math.round(s.damage * s.critMult * (1 - f.armor / 100)))})</div>` : ''}
       ${f.ability ? `<div class="dim"><i>${esc(f.ability)}</i></div>` : ''}${abil}
       <div style="margin-top:4px;color:${reach ? 'var(--bad)' : 'var(--dim)'}">${reach ? (R.strikeLeft(G) ? 'Click to spend hits on it' : R.canAttack(G) ? 'In reach: click to attack it' : 'In reach') : 'Out of your reach'}</div>`.replace(/Click/g, TOUCH ? 'Tap' : 'Click');
@@ -598,7 +624,8 @@ function selectTile(t) {
   tip.innerHTML = `${f ? foeInfo(f) : ''}${label ? `<button class="primary go">${esc(label)}</button>` : ''}<button class="x" aria-label="Close">✕</button>`;
   tip.hidden = false;
   const go = tip.querySelector('.go');
-  if (go) go.onclick = () => { const q = sel; clearSel(); clickTile(q); };
+  const shownAt = performance.now();
+  if (go) go.onclick = () => { if (performance.now() - shownAt < 250) return; const q = sel; clearSel(); clickTile(q); }; // not the tap that opened it
   tip.querySelector('.x').onclick = clearSel;
 }
 function clearSel() { sel = null; hover = null; $('#tip').hidden = true; updateHighlights(); }
@@ -650,6 +677,7 @@ function bindInput() {
     if (mate && mate !== G.hero) { clearSel(); switchHero(G.party.indexOf(mate)); return; } // one tap switches heroes
     selectTile(t);
   });
+  cv.addEventListener('touchend', e => { if (e.cancelable) e.preventDefault(); }, { passive: false }); // no ghost click on whatever pops up under the finger
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('wheel', e => { e.preventDefault(); view.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); }, { passive: false });
   addEventListener('keydown', e => {
@@ -703,7 +731,7 @@ function partyStrip() {
   if (!G || G.party.length < 2) { el.hidden = true; return; }
   el.hidden = false;
   el.innerHTML = G.party.map((h, i) => {
-    const sh = shown?.[h.hid], hp = sh ? sh.hp : h.hp, ward = sh ? sh.ward : h.ward, mx = R.derive(h).maxHp;
+    const sh = shown?.[h.hid], hp = sh ? sh.hp : h.hp, ward = sh ? sh.ward + sh.rune : (h.ward || 0) + (h.rune || 0), mx = R.derive(h).maxHp;
     const state = h.hp <= 0 && !sh ? 'down' : hp <= 0 ? 'down' : G.cleared ? '' : R.heroDone(G, h) ? 'done' : h.turn?.acted ? 'acted' : 'ready';
     const tag = { down: '✖ down', done: '✓ done', acted: 'acted', ready: 'ready', '': '' }[state];
     return `<button class="mate ${i === G.active ? 'on' : ''} ${state}" data-i="${i}" style="--hc:${HERO_COLOR[h.cls]}">
@@ -849,7 +877,7 @@ function inventory(who = invWho ?? G?.active) {
   const stat = (l, v) => `<span>${l}</span><span>${v}</span>`;
   const p = modal(`<button class="close">✕</button><h2>${esc(h.name)} <span class="dim" style="font-size:14px">${h.name === R.CLASSES[h.cls].name ? '' : `the ${esc(R.CLASSES[h.cls].name)} · `}party Favour ${G.favour || 0}</span></h2>${G.party.length > 1 ? '<button id="toArmory" style="margin-bottom:8px">⇄ Party gear: compare and swap</button>' : ''}${tabsHtml}
     <div class="inv"><div>
-      <div class="statgrid">${stat('Max health', fmt(s.maxHp))}${stat('Armor', s.armor + '%')}${stat('Attack dice', s.dice)}${stat('Damage per hit', fmt(s.damage))}${stat('Crit multiplier', '×' + s.critMult)}${stat('Cleave', s.cleave || 0)}${stat('Energy per round', s.energyPerRound)}${stat('Energy per kill', s.energyPerKill)}${stat('Max energy', s.maxEnergy)}${stat('Move', s.move)}${stat('Reach', s.reach || 'melee')}</div>
+      <div class="statgrid">${stat('Max health', fmt(s.maxHp))}${stat('Armour', armourText(s.armor))}${stat('Attack dice', s.dice)}${stat('Damage per hit', fmt(s.damage))}${stat('Crit multiplier', '×' + s.critMult)}${stat('Cleave', s.cleave || 0)}${stat('Energy per round', R.energyPerRound(h) === s.energyPerRound ? s.energyPerRound : `${R.energyPerRound(h)} <span class="dim">(${s.energyPerRound} before taper)</span>`)}${stat('Energy per kill', s.energyPerKill)}${stat('Max energy', s.maxEnergy)}${stat('Move', s.move)}${stat('Reach', s.reach || 'melee')}</div>
       <h3>Abilities</h3><div class="abils">${abilityRows(who)}</div>
       <h3 style="margin-top:10px">Sets</h3><div class="sets">${setRows}</div>
       <h3 style="margin-top:10px">Synergies</h3><div class="sets">${syn}</div>
@@ -871,7 +899,7 @@ function inventory(who = invWho ?? G?.active) {
 // ================================================================== the armory: the whole party's gear side by side
 const SHORT = { maxHp: '❤', damage: '⚔', dice: 'dice', armor: '⛨', critMult: 'crit ×', cleave: 'cleave', energyPerRound: 'en/round', energyPerKill: 'en/kill', maxEnergy: 'max en' };
 const WEIGHT = { maxHp: 1, damage: 2, dice: 400, armor: 30, critMult: 300, cleave: 150, energyPerRound: 15, energyPerKill: 10, maxEnergy: 3 };
-const fmtDelta = (k, v) => `${v > 0 ? '+' : '−'}${k === 'armor' ? Math.abs(v) + '%' : k === 'critMult' ? Math.abs(v) : fmt(Math.abs(v))} ${SHORT[k]}`;
+const fmtDelta = (k, v) => `${v > 0 ? '+' : '−'}${k === 'armor' ? Math.abs(v) : k === 'critMult' ? Math.abs(v) : fmt(Math.abs(v))} ${SHORT[k]}`;
 const scoreOf = d => Object.entries(d.delta).reduce((t, [k, v]) => t + v * (WEIGHT[k] || 1), 0) + d.gained.length * 400 - d.lost.length * 400;
 const itemLine = it => Object.entries(it.stats).slice(0, 2).map(([k, v]) => fmtDelta(k, v)).join(' · ');
 let armPick = null;
@@ -886,7 +914,7 @@ function armory(pick = armPick) {
     for (const it of Object.values(h.gear)) if (it?.set) c[it.set] = (c[it.set] || 0) + 1;
     const syns = R.SYNERGIES.filter(sy => (h.unlocked || []).includes(`syn:${sy.key}`) && Object.entries(sy.needs).every(([k, q]) => (c[k] || 0) >= q));
     return `<div class="ah" style="--hc:${HERO_COLOR[h.cls]}"><button class="hn" data-hero="${i}">${R.CLASSES[h.cls].glyph} ${esc(h.name)}</button>
-      <div class="hs">❤ ${fmt(s.maxHp)} · ⛨ ${s.armor}%<br>⚔ ${fmt(s.damage)} × ${s.dice}d6${s.critMult > 2 ? ` · crit ×${s.critMult}` : ''}</div>
+      <div class="hs">❤ ${fmt(s.maxHp)} · ⛨ ${armourText(s.armor)}<br>⚔ ${fmt(s.damage)} × ${s.dice}d6${s.critMult > 2 ? ` · crit ×${s.critMult}` : ''}</div>
       <div class="hsets">${Object.entries(c).map(([k, q]) => `<span class="sdot" style="--sc:${R.SETS[k].color}" title="${esc(R.SETS[k].name)}">${q}</span>`).join('')}${syns.map(sy => `<span class="syn" title="${esc(R.synergyText(sy))}">✦ ${esc(sy.name)}</span>`).join('')}</div></div>`;
   }).join('');
   // previews for the picked item, per destination hero
@@ -1040,7 +1068,11 @@ function help(after) {
     <h3>Powers</h3><p>Powers cost energy and use your action. You gain energy every round and for every kill, however the foe dies (an attack, a power, a fall into a chasm): a blue +N ⚡ shows each one. <b>Attack powers</b> (marked "attack") prime your attack instead, and <b>move-and-strike</b> powers (Leaping Strike, Grapple Line, Shadowstep, marked "+ strike") move you and then let you attack in the same turn. Positional powers move you or your foes: hurl them into walls (<b>slammed</b>: +1 hit), into chasms, or pin them in place. Gear from an <b>item set</b> unlocks that set's power with just one piece.</p>
     <p>Tapping a power or ware never fires it straight away: a panel shows what it does, and it only happens when you confirm (Use, Confirm, or picking a target). Every ability you have is described under Gear.</p>
     <h3>Breaking away</h3><p>Walking away from a foe beside you gives it a <b>free blow</b> (the path turns red). Leaps, teleports and Vanish avoid it.</p>
-    <h3>Defending</h3><p>In the enemy phase each foe rolls one die per attack: every 1–3 lands (1–2 if your armor is 30%+). You take an extra die when <b>surrounded</b> (3+ foes beside you) or attacked <b>from higher ground</b>. Armor reduces the damage; a <b>ward</b> soaks the rest.</p>
+    <h3>Defending</h3><p>In the enemy phase each foe rolls one die per attack, like you do: every 4+ is a blow that lands (5+ against heavy armour, 30 or more), and every 6 is a <b>crit</b> (minions ×1.5, elites ×2, bosses ×2.5). You take an extra die when <b>surrounded</b> (3+ foes beside you) or attacked <b>from higher ground</b>.</p>
+    <p><b>Armour</b> is a rating: it blocks rating ÷ (rating + 100) of each blow, so 100 armour halves damage and nothing is ever immune; your armour shows as "rating (share blocked)". A crit pierces half your armour, and foes with <b>Armour-breaker</b> ignore 20 more.</p>
+    <p><b>Wards</b> soak what gets through armour. You hold two layers: a <b>ward</b> (anyone's powers and wares) and a <b>rune ward</b> (the Runepriest's Warding Circle and Rune of Recall). A new ward in a layer only replaces the old one if it's bigger; they never add up. Damage hits the rune ward first, then the ward. At the end of each round both halve.</p>
+    <h3>Energy</h3><p>Every kill grants energy (a blue +N ⚡). Minion kills taper each round: the first pays in full, the 2nd and 3rd half, later ones a quarter; elite and boss kills always pay in full. At the end of the round you gain your Energy per Round, or half of it if you're already at half your max or more. Energy per Round from gear also tapers: the first +15 counts in full, the next +15 half, the rest a quarter. <b>Surge</b>: once per round, after acting, spend ${R.ENERGY.surge} energy to act again. Some foes drain energy: <b>Energy Leech</b>, <b>Drown</b> (2+ blows landing take 25) and <b>Chill</b> (heroes beside it lose 10 each round).</p>
+    <h3>The Runepriest</h3><p><b>Runebrand</b>: every foe the Runepriest damages is branded until the end of the round, and any other hero attacking with a branded foe in reach rolls +1 die. <b>Reactions</b> cost energy but not his action, work outside his turn and once each per round: on another hero's turn, the ᛟ row offers <b>Rune of Mending</b> (25: heal an ally below a third of their health by 15%) and <b>Rune of Haste</b> (30: their next attack rolls +1 die). <b>Rune of Turning</b> (20) is armed by default and fires by itself when a foe's blows are about to land hard on an ally: every die that hit is rerolled once.</p>
     <h3>Chasms</h3><p>A Slam can hurl you into a chasm: a fall costs 10% of your health and foes lose you. Climbing out is your action: d6 4+, with +1 for each failed try. Minions pushed into a chasm are gone; elites climb out hurt.</p>
     <h3>Waves and scenes</h3><p>Each scene comes from the Delvers' Ledger adventure planner: skirmishes, swarms, elite packs, gauntlets and bosses, sized to your gear when each act began. Reinforcements arrive at the end of later rounds. Clear every foe and the turns stop: walk freely, open the chests (gold beacons) and take the glowing spiral stair in the west wall; the buttons at the bottom walk you there. Between acts the Rakshasa buys your spare gear for Favour and sells boons and wares.</p>
     <h3>Foe abilities</h3>${foes}

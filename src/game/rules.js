@@ -6,7 +6,7 @@
 // G.hidden are accessors onto the active hero (bindParty), so most rules read as if for one hero; anything that
 // acts on another hero (foes attacking, party heals) runs inside withHero().
 import {
-  CLASSES, ENEMY_TYPES, FOE_ABILITIES, HIDDEN_DICE, derive, powersFor, makeItem, randomRarity, landOn, fmt,
+  CLASSES, ENEMY_TYPES, FOE_ABILITIES, HIDDEN_DICE, derive, powersFor, FOE_CRIT, hitOn, armorCut, ARMOR_BREAK, makeItem, randomRarity, landOn, fmt,
   setCounts, activeSynergies, SETS, SYNERGIES, CLASS_SETS, newCharacter, partyDamagePerRound, RARITY_ORDER, statsText, synergyText, SLOTS,
 } from '../ledger/engine.js';
 import { planScene, partyPower, flatIndex } from '../ledger/adventure.js';
@@ -25,11 +25,23 @@ export const SOLO = {
   breather: 0.35,       // heal this share of max health after each cleared scene
   elitePitShare: 0.3,   // an elite knocked into a chasm loses this share of its max health and climbs out
   throes: 300,
-  threat: 0.8,         // big foes' damage per blow against a lone hero, who has no one to share the blows with
-  partyThreat: 1.1,     // … and against a party
+  threat: 0.42,        // big foes' damage per blow against a lone hero, who has no one to share the blows with
+  partyThreat: 0.72,    // … and against a party
   revive: 0.25,         // heroes downed in a scene get up with this share of health once it is clear
   maxParty: 4,
 };
+// Rules from the tabletop playtest of 2026-11-15 (mirrored from Delvers' Ledger; see help() for the player text).
+export const ARMOUR = { pierce: 0.5, sunder: ARMOR_BREAK };     // crits halve the rating; Armour-breaker ignores 20 more
+export const armourCut = rating => armorCut(Math.max(0, rating)); // the ledger's curve: 100 armour halves damage; never immune
+export const ENERGY = { surge: 60, regenTaper: [15, 15], drown: 25, chill: 10, killTaper: [1, 0.5, 0.5, 0.25] };
+export const REACTIONS = {
+  turning: { name: 'Rune of Turning', cost: 20, text: 'When a foe\'s blows are about to land hard on an ally, they reroll every foe die that hit, once. Fires by itself while armed.' },
+  mending: { name: 'Rune of Mending', cost: 25, text: 'Heal an ally below a third of their max health by 15% of their max health.' },
+  haste: { name: 'Rune of Haste', cost: 30, text: 'The ally\'s next attack rolls +1 die.' },
+};
+// A hero's Energy per Round. The ledger's derive() already applies the gear taper (first +15 in full, next +15 half,
+// the rest a quarter, on everything above the class base); the half-regen-at-half-energy rule is in endRound.
+export const energyPerRound = h => derive(h).energyPerRound;
 export const DEFAULT_NAMES = { ironclad: 'Brannoc', runepriest: 'Hild', ranger: 'Tess', arcanist: 'Orrin', shadowblade: 'Vex' };
 const REACH_TILES = r => (r ? r : 1); // the ledger's inches are squares here; 0 = adjacent
 
@@ -90,7 +102,7 @@ export function startScene(G, rng) {
   G.stage = 'scene';
   G.active = 0;
   for (const h of G.party) {
-    Object.assign(h, { pos: null, strike: null, pit: null, hidden: null, buffs: {}, ward: 0 });
+    Object.assign(h, { pos: null, strike: null, pit: null, hidden: null, buffs: {}, ward: 0, rune: 0, minionKills: 0 });
     if (h.hp <= 0) h.hp = Math.round(derive(h).maxHp * SOLO.revive);
     h.downed = false;
   }
@@ -155,15 +167,23 @@ function log(G, text, kind = 'info') {
 }
 const fx = (G, e) => G.fx.push(e);
 
-function hurtHero(G, amount, { ignoreArmor = false, from = null, label = '' } = {}) {
+// Damage to the active hero: armour (a rating) cuts it first, then the rune ward soaks, then the normal ward.
+// crit: the blow pierces half the armour; sunder: Armour-breaker ignores 20 more (after the pierce).
+function hurtHero(G, amount, { ignoreArmor = false, from = null, label = '', crit = false, sunder = false } = {}) {
   const ch = G.hero, s = derive(ch);
-  const blocked = ignoreArmor ? 0 : Math.round(amount * s.armor / 100);
+  let rating = s.armor;
+  if (crit) rating *= ARMOUR.pierce;
+  if (sunder) rating = Math.max(0, rating - ARMOUR.sunder);
+  const blocked = ignoreArmor ? 0 : Math.round(amount * armourCut(rating));
   let net = amount - blocked;
+  const runed = Math.min(ch.rune || 0, net);
+  ch.rune = (ch.rune || 0) - runed;
+  net -= runed;
   const warded = Math.min(ch.ward || 0, net);
   ch.ward = (ch.ward || 0) - warded;
   net -= warded;
   ch.hp = Math.max(0, ch.hp - net);
-  fx(G, { t: 'dmg', id: G.hero.hid, n: net, warded, blocked, from: from?.id, label });
+  fx(G, { t: 'dmg', id: G.hero.hid, n: net, warded: warded + runed, normal: warded, rune: runed, blocked, crit, from: from?.id, label });
   if (ch.hp <= 0 && G.stage === 'scene' && !ch.downed) {
     ch.downed = true; ch.strike = null; ch.pit = null; ch.hidden = null; ch.buffs = {};
     fx(G, { t: 'die', id: G.hero.hid });
@@ -190,9 +210,12 @@ function eachHero(G, who, fn) {
   const list = who === 'party' ? standing(G) : who === 'others' ? standing(G).filter(h => h !== me) : [me];
   for (const h of list) withHero(G, h, fn);
 }
-function ward(G, n) {
-  G.hero.ward = (G.hero.ward || 0) + n;
-  fx(G, { t: 'ward', id: G.hero.hid, n });
+// Two ward layers that never add up: a new ward only replaces the old one in its layer if it is bigger.
+// Rune wards come only from the Runepriest's own powers (Warding Circle, Rune of Recall).
+function ward(G, n, rune = false) {
+  const k = rune ? 'rune' : 'ward', before = G.hero[k] || 0;
+  G.hero[k] = Math.max(before, n);
+  fx(G, { t: 'ward', id: G.hero.hid, n: G.hero[k] - before, rune, held: G.hero[k] === before });
 }
 
 // ------------------------------------------------------------------ foes
@@ -270,7 +293,10 @@ function killFoe(G, f, rng, how = '') {
   const t = ch.tally ||= { minion: 0, elite: 0, boss: 0 };
   t[f.type] = (t[f.type] || 0) + 1;
   ch.kills = (ch.kills || 0) + 1;
-  const e = gainEnergy(G, s.energyPerKill * (ENEMY_TYPES[f.type]?.energyMult || 1));
+  // minion kills taper within a round (full, half, half, then a quarter); elite and boss kills always pay in full
+  let pay = s.energyPerKill * (ENEMY_TYPES[f.type]?.energyMult || 1);
+  if (f.type === 'minion') { const k = ch.minionKills = (ch.minionKills || 0) + 1; pay = Math.floor(pay * ENERGY.killTaper[Math.min(k, 4) - 1]); }
+  const e = gainEnergy(G, pay);
   fx(G, { t: 'die', id: f.id });
   if (f.type !== 'minion') log(G, `${f.name} falls${how}! (+${e} energy)`, 'kill');
   if (foeHas(f, 'throes')) {
@@ -305,6 +331,7 @@ function hitFoe(G, f, n, rng, { crit = false, mult = 1, label = '' } = {}) {
   const s = derive(G.hero);
   const dmg = Math.round(n * s.damage * (crit && !foeHas(f, 'thickhide') ? s.critMult : 1) * mult * (1 - (f.armor || 0) / 100));
   f.hp = Math.max(0, f.hp - dmg);
+  if (G.hero.cls === 'runepriest' && dmg > 0 && !f.brand) { f.brand = G.hero.hid; fx(G, { t: 'text', id: f.id, text: 'Branded', color: '#5fd3c4' }); }
   fx(G, { t: 'dmg', id: f.id, n: dmg, crit: crit && !foeHas(f, 'thickhide'), label });
   if (f.hp <= 0) killFoe(G, f, rng); else foeDamaged(G, f, rng);
   return dmg;
@@ -337,6 +364,16 @@ function freeBlow(G, f, rng) {
   if (lands) { log(G, `${f.name} lands a free blow as ${G.hero.name} breaks away.`, 'hurt'); hurtHero(G, f.damage, { from: f, label: 'Free blow' }); }
   else { fx(G, { t: 'text', id: G.hero.hid, text: 'Dodged', color: '#cfd8e3' }); }
 }
+// Surge: once per round, a hero who has used their action may spend 60 energy to act again.
+export const canSurge = G => G.stage === 'scene' && !G.cleared && G.hero.hp > 0 && !G.pit && !!G.turn.acted && G.turn.acted !== 'down' && !G.turn.surged && G.hero.energy >= ENERGY.surge;
+export function surge(G) {
+  if (!canSurge(G)) return err(G.turn.surged ? 'Only one Surge per round' : !G.turn.acted ? 'You still have your action' : `Surge needs ${ENERGY.surge} energy`);
+  gainEnergy(G, -ENERGY.surge, true);
+  G.turn.acted = null; G.turn.surged = true;
+  fx(G, { t: 'power', name: 'Surge' });
+  log(G, `${G.hero.name} surges: another action this round.`, 'ability');
+  return ok();
+}
 export function sprint(G) {
   if (!canAct(G)) return err('You have already acted');
   G.turn.acted = 'sprint';
@@ -351,9 +388,11 @@ export function highGround(G) {
   const e = heroTile(G).e;
   return foesInReach(G).some(f => tile(G.map, f.x, f.y).e < e) ? 1 : 0;
 }
+// Runebrand: another hero's attack rolls +1 die while a foe in their reach is branded by the Runepriest.
+export const runebrand = G => (G.hero.cls !== 'runepriest' && foesInReach(G).some(f => f.brand) ? 1 : 0);
 export function attackPool(G) {
-  const s = derive(G.hero);
-  return { base: s.pool, high: highGround(G), hidden: G.hidden ? HIDDEN_DICE : 0, total: s.pool + highGround(G) + (G.hidden ? HIDDEN_DICE : 0) };
+  const s = derive(G.hero), brand = runebrand(G);
+  return { base: s.pool, high: highGround(G), hidden: G.hidden ? HIDDEN_DICE : 0, brand, total: s.pool + highGround(G) + (G.hidden ? HIDDEN_DICE : 0) + brand };
 }
 export function attack(G, rng) {
   if (!canAttack(G)) return err('You have already acted this turn');
@@ -362,7 +401,7 @@ export function attack(G, rng) {
   const dice = Array.from({ length: P.total }, () => d6(rng));
   const hits = dice.filter(d => d >= 4).length, sixes = dice.filter(d => d === 6).length;
   G.strike = { hits: hits - sixes, crits: sixes, minion: (G.strike?.minion || 0) + sixes * (s.cleave || 0), mult: G.hero.buffs.damageMult || 1 };
-  const label = [G.hero.buffs.label, P.high && 'high ground', P.hidden && 'from hiding'].filter(Boolean).join(', ');
+  const label = [G.hero.buffs.label, P.high && 'high ground', P.hidden && 'from hiding', P.brand && 'Runebrand'].filter(Boolean).join(', ');
   G.hero.buffs = {};
   G.turn.acted = 'attack';
   if (G.hidden) { G.hidden = null; log(G, `${G.hero.name} strikes from hiding!`, 'hit'); }
@@ -419,9 +458,9 @@ const DESC = {
   leap: 'Leap up to 4 squares, even 3 levels up onto a ledge, with no free blows. Then attack in the same action with +2 dice.',
   quake: 'Slam the ground: every foe within 2 squares takes a hit and is hurled 3 squares away. A foe slammed into a wall, ledge or another foe takes +1 hit; minions knocked into a chasm are gone.',
   bulwark: 'Gain a 600 ward and roar: every foe within 3 squares is dragged to your side and fights you this round.',
-  recall: 'Swap places with an ally (or a foe) within 10 squares, with no free blows. Foes turn on whoever now stands before them, and you both gain a 300 ward.',
-  circle: 'You and every ally within 2 squares gain a 300 ward and heal 10%. Foes can\'t step into the circle until the next round.',
-  hammer: 'Strike a foe within 6 squares in sight: 2 hits, knocked 3 squares back (+1 hit if slammed into something), and pinned until the next round.',
+  recall: 'Swap places with an ally (or a foe) within 10 squares, with no free blows. Foes turn on whoever now stands before them, and you both gain a 300 rune ward.',
+  circle: 'You and every ally within 2 squares gain a 300 rune ward and heal 10%. Foes can\'t step into the circle until the next round.',
+  hammer: 'Strike a foe within 6 squares in sight: {hits} hits, knocked 3 squares back (+1 hit if slammed into something), and pinned until the next round.',
   grapple: 'Haul yourself up to a higher square within 8 in sight, with no free blows. Then attack in the same action with +1 die (plus high ground).',
   vanish: 'Move up to 4 squares and become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
   pin: 'Pin up to 2 foes within 12 squares in sight so they can\'t move until the next round. +2 dice on your next attack.',
@@ -431,7 +470,7 @@ const DESC = {
   step: 'Pick a foe within 6 squares and any free square beside it: you teleport there, with no free blows. Then attack in the same action for triple damage.',
   smoke: 'Become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
 };
-export const powerText = p => (p.key === 'step' && p.vaultWard ? `${DESC.step} Vaultbreaker: you also gain a ${fmt(p.vaultWard)} ward.` : DESC[p.key] || p.text);
+export const powerText = p => (p.key === 'step' && p.vaultWard ? `${DESC.step} Vaultbreaker: you also gain a ${fmt(p.vaultWard)} ward.` : (DESC[p.key] || p.text).replace('{hits}', hitsOf(p, 2)));
 export function powerSpec(G, p) {
   if (SPECS[p.key]) return SPECS[p.key];
   return { mode: 'self', text: soloNotes(p, G) || p.text };
@@ -558,7 +597,7 @@ export function usePower(G, keyName, target, rng) {
       const caught = living(G).filter(f => dist(f, G.pos) <= S.radius).sort((a, b) => dist(b, G.pos) - dist(a, G.pos));
       for (const f of caught) {
         const slam = push(G, f, dirFrom(G.pos, f), 3, rng);
-        if (!f.dead) hitFoe(G, f, 1 + (slam ? 1 : 0), rng, { label: slam ? 'Slammed' : '' });
+        if (!f.dead) hitFoe(G, f, hitsOf(p, 1) + (slam ? 1 : 0), rng, { label: slam ? 'Slammed' : '' });
       }
       break;
     }
@@ -574,7 +613,7 @@ export function usePower(G, keyName, target, rng) {
     case 'recall': {
       const u = foes[0], ally = !!u.hid, upos = ally ? u.pos : { x: u.x, y: u.y }, from = { ...G.pos };
       G.pos = { ...upos };
-      if (ally) { u.pos = from; withHero(G, u, () => ward(G, 300)); for (const f of living(G)) if (f.taunt === u.hid) f.taunt = G.hero.hid; else if (f.taunt === G.hero.hid) f.taunt = u.hid; }
+      if (ally) { u.pos = from; withHero(G, u, () => ward(G, 300, true)); for (const f of living(G)) if (f.taunt === u.hid) f.taunt = G.hero.hid; else if (f.taunt === G.hero.hid) f.taunt = u.hid; }
       else { u.x = from.x; u.y = from.y; }
       fx(G, { t: 'move', id: G.hero.hid, path: [upos, G.pos], kind: 'blink' });
       fx(G, { t: 'move', id: ally ? u.hid : u.id, path: [G.pos, from], kind: 'blink' });
@@ -585,7 +624,7 @@ export function usePower(G, keyName, target, rng) {
       const f = foes[0];
       fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: 'hammer' });
       const slam = push(G, f, dirFrom(G.pos, f), 3, rng);
-      if (!f.dead) { hitFoe(G, f, 2 + (slam ? 1 : 0), rng, { label: slam ? 'Slammed' : '' }); if (!f.dead) pinFoe(G, f); }
+      if (!f.dead) { hitFoe(G, f, hitsOf(p, 2) + (slam ? 1 : 0), rng, { label: slam ? 'Slammed' : '' }); if (!f.dead) pinFoe(G, f); }
       break;
     }
     case 'pin': for (const f of foes) { fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: 'ranger' }); pinFoe(G, f); } break;
@@ -611,7 +650,7 @@ export function usePower(G, keyName, target, rng) {
     }
     case 'meteor': {
       fx(G, { t: 'burst', at, kind: 'meteor', radius: S.radius });
-      for (const f of living(G).filter(f => dist(f, at) <= S.radius)) hitFoe(G, f, 2, rng);
+      for (const f of living(G).filter(f => dist(f, at) <= S.radius)) hitFoe(G, f, hitsOf(p, 2), rng);
       break;
     }
     case 'step': {
@@ -635,16 +674,17 @@ export function usePower(G, keyName, target, rng) {
       else eachHero(G, f.who === 'others' ? 'others' : 'party', () => gainEnergy(G, f.amount));
     }
     else if (f.kind === 'smite') smite(G, f.kills, rng);
-    else if (f.kind === 'allyWard') { // you and every ally inside the circle
+    else if (f.kind === 'allyWard') { // you and every ally inside the circle: a rune ward
       const me = G.hero;
-      for (const h of standing(G).filter(h => h === me || dist(h.pos, me.pos) <= (S.radius || 2))) withHero(G, h, () => { ward(G, f.amount); heal(G, f.heal || 0); });
+      for (const h of standing(G).filter(h => h === me || dist(h.pos, me.pos) <= (S.radius || 2))) withHero(G, h, () => { ward(G, f.amount, true); heal(G, f.heal || 0); });
     }
-    else if (f.kind === 'swap') ward(G, f.ward || 0);
+    else if (f.kind === 'swap') ward(G, f.ward || 0, true);
     else if (f.kind === 'hide') { G.hidden = { until: G.round + 1 }; fx(G, { t: 'hide' }); log(G, `${G.hero.name} is hidden.`, 'ability'); }
   }
   checkCleared(G);
   return ok({ attack: strikes });
 }
+const hitsOf = (p, d) => (p.effects || []).find(e => e.kind === 'areaHit')?.hits ?? d;
 function pinFoe(G, f) {
   if (f.dead) return;
   f.pinned = true;
@@ -703,6 +743,51 @@ function push(G, f, [dx, dy], n, rng, { quiet = false } = {}) {
   if (f.x !== from.x || f.y !== from.y) fx(G, { t: 'move', id: f.id, path: [from, { x: f.x, y: f.y }], kind: 'push' });
   if (slam && !quiet) fx(G, { t: 'text', id: f.id, text: 'Slammed!', color: '#ff9a5a' });
   return slam;
+}
+
+// ------------------------------------------------------------------ the Runepriest's reactions
+export const priestsOf = G => standing(G).filter(h => h.cls === 'runepriest' && !h.pit);
+const reactedThisRound = (G, h, k) => h.reacted?.round === G.round && h.reacted.used.includes(k);
+const markReacted = (G, h, k) => { if (h.reacted?.round !== G.round) h.reacted = { round: G.round, used: [] }; h.reacted.used.push(k); };
+// Which reactions priest p can use on ally a right now (Turning is automatic, so not listed here).
+export function reactionsFor(G, p, a) {
+  if (!p || !a || p === a || G.stage !== 'scene' || G.cleared || p.hp <= 0 || p.pit || a.hp <= 0) return [];
+  const out = [];
+  for (const k of ['mending', 'haste']) {
+    const R = REACTIONS[k];
+    let why = reactedThisRound(G, p, k) ? 'used this round' : p.energy < R.cost ? `needs ${R.cost} energy` : '';
+    if (!why && k === 'mending' && a.hp >= derive(a).maxHp / 3) why = 'ally above a third of their health';
+    out.push({ key: k, ...R, ok: !why, why });
+  }
+  return out;
+}
+export function react(G, priestHid, key, allyHid) {
+  const p = G.party.find(h => h.hid === priestHid), a = G.party.find(h => h.hid === allyHid);
+  const r = reactionsFor(G, p, a).find(x => x.key === key);
+  if (!r) return err('No such reaction');
+  if (!r.ok) return err(`${r.name}: ${r.why}`);
+  withHero(G, p, () => gainEnergy(G, -r.cost, true));
+  markReacted(G, p, key);
+  fx(G, { t: 'power', name: r.name });
+  fx(G, { t: 'bolt', from: { ...p.pos }, to: { ...a.pos }, cls: 'runepriest' });
+  if (key === 'mending') withHero(G, a, () => heal(G, 15));
+  if (key === 'haste') { a.buffs ||= {}; a.buffs.bonusDice = (a.buffs.bonusDice || 0) + 1; a.buffs.label = a.buffs.label ? `${a.buffs.label}, Rune of Haste` : 'Rune of Haste'; fx(G, { t: 'text', id: a.hid, text: '+1 die', color: '#5fd3c4' }); }
+  log(G, `${p.name}: ${r.name} on ${a.name}.`, 'ability');
+  return ok();
+}
+// Rune of Turning: armed by default; fires once per round when an ally is about to take a hard hit.
+export function setTurning(G, priestHid, on) { const p = G.party.find(h => h.hid === priestHid); if (p) p.turningOff = !on; return ok(); }
+function tryTurning(G, target, f, hits, crits) {
+  const p = priestsOf(G).find(q => q !== target && !q.turningOff && !reactedThisRound(G, q, 'turning') && q.energy >= REACTIONS.turning.cost);
+  if (!p || !hits) return false;
+  const s = derive(target), raw = (hits - crits) * f.damage + crits * f.damage * (f.critMult || FOE_CRIT[f.type] || 1.5);
+  const est = raw * (1 - armourCut(s.armor)) - (target.ward || 0) - (target.rune || 0);
+  if (est < s.maxHp * 0.2 && est < target.hp) return false; // save it for something that matters
+  withHero(G, p, () => gainEnergy(G, -REACTIONS.turning.cost, true));
+  markReacted(G, p, 'turning');
+  fx(G, { t: 'power', name: `${p.name}: Rune of Turning` });
+  log(G, `${p.name}'s Rune of Turning: ${target.name}'s foe rerolls its hits.`, 'ability');
+  return true;
 }
 
 // ------------------------------------------------------------------ wares (one per turn, free)
@@ -1039,22 +1124,36 @@ export function foeAttackDice(G, f, swept = 1) {
   const surrounded = living(G).filter(o => adjacent(o, G.pos)).length >= 3 ? 1 : 0;
   const higher = tile(G.map, f.x, f.y).e > heroTile(G).e ? 1 : 0;
   const sweep = foeHas(f, 'sweep') && swept < 2 ? 1 : 0; // Sweeping Blows with only one hero to sweep swings once more
-  return { n: f.attacks + surrounded + higher + sweep, landOn: landOn(s), surrounded, higher };
+  return { n: f.attacks + surrounded + higher + sweep, landOn: landOn(s), hitOn: hitOn(landOn(s)), surrounded, higher };
 }
 function foeAttack(G, f, rng, swept = 1) {
   const D = foeAttackDice(G, f, swept);
-  const dice = Array.from({ length: D.n }, () => d6(rng));
-  const landed = dice.filter(d => d <= D.landOn).length;
+  let dice = Array.from({ length: D.n }, () => d6(rng));
+  const count = ds => ({ hits: ds.filter(d => d >= D.hitOn).length, crits: ds.filter(d => d === 6).length });
   fx(G, { t: 'face', id: f.id, at: { ...G.pos } });
   fx(G, { t: 'anim', id: f.id, a: 'attack', face: G.pos });
   if (f.reach > 1) fx(G, { t: 'bolt', from: { x: f.x, y: f.y }, to: { ...G.pos }, cls: 'arrow' });
-  fx(G, { t: 'dice', who: f.name, label: `${f.name} attacks ${G.hero.name}${D.surrounded ? ' (surrounded)' : ''}${D.higher ? ' (from above)' : ''}`, dice, landOn: D.landOn, defense: true });
-  for (let i = 0; i < landed && G.stage === 'scene'; i++) hurtHero(G, f.damage, { from: f, label: landed > 1 ? `Blow ${i + 1} of ${landed}` : 'Blow' }); // one blow at a time
+  fx(G, { t: 'dice', who: f.name, label: `${f.name} attacks ${G.hero.name}${D.surrounded ? ' (surrounded)' : ''}${D.higher ? ' (from above)' : ''}`, dice, hitOn: D.hitOn, defense: true });
+  let { hits, crits } = count(dice);
+  if (tryTurning(G, G.hero, f, hits, crits)) { // reroll every die that hit, once; only the second roll counts
+    dice = dice.map(d => (d >= D.hitOn ? d6(rng) : d));
+    ({ hits, crits } = count(dice));
+    fx(G, { t: 'dice', who: f.name, label: 'Rune of Turning: reroll', dice, hitOn: D.hitOn, defense: true });
+  }
+  const landed = hits, mult = f.critMult || FOE_CRIT[f.type] || 1.5, sunder = foeHas(f, 'sunder');
+  for (let i = 0; i < landed && G.stage === 'scene'; i++) { // one blow at a time, crits first
+    const crit = i < crits;
+    hurtHero(G, Math.round(f.damage * (crit ? mult : 1)), { from: f, crit, sunder, label: `${crit ? 'Crit' : 'Blow'}${landed > 1 ? ` ${i + 1} of ${landed}` : ''}` });
+  }
   if (!landed) fx(G, { t: 'text', id: G.hero.hid, text: 'Blocked', color: '#cfd8e3' });
   if (G.stage !== 'scene') return;
   if (foeHas(f, 'leech')) {
     const lost = -gainEnergy(G, -10);
     if (lost) announce(G, f, 'leech', `${G.hero.name} loses ${lost} energy.`);
+  }
+  if (foeHas(f, 'drown') && landed >= 2) {
+    const lost = -gainEnergy(G, -ENERGY.drown);
+    if (lost) announce(G, f, 'drown', `${G.hero.name} loses ${lost} energy.`);
   }
   if (foeHas(f, 'slam') && landed) hurl(G, f, rng);
 }
@@ -1090,14 +1189,28 @@ function endRound(G, rng) {
       for (let i = 0; i < 2; i++) { const at = freeNear(G, f); if (at) spawnFoe(G, minionSpawn(G), at, rng); }
     }
   }
-  for (const f of living(G)) f.taunt = null;
+  for (const f of living(G)) {
+    if (foeHas(f, 'chill')) for (const h of standing(G).filter(h => h.pos && !h.pit && adjacent(h.pos, f))) {
+      const lost = -withHero(G, h, () => gainEnergy(G, -ENERGY.chill));
+      if (lost) announce(G, f, 'chill', `${h.name} loses ${lost} energy.`);
+    }
+    f.taunt = null; f.brand = null;
+  }
+  for (const h of G.party) { // wards fade: both layers halve
+    const had = (h.ward || 0) + (h.rune || 0);
+    h.ward = Math.floor((h.ward || 0) / 2); h.rune = Math.floor((h.rune || 0) / 2); h.minionKills = 0;
+    if (had) fx(G, { t: 'wardfade', id: h.hid, ward: h.ward, rune: h.rune });
+  }
   for (const h of G.party) if (h.hidden && h.hidden.until <= G.round) { h.hidden = null; fx(G, { t: 'text', id: h.hid, text: 'Revealed', color: '#b88cff' }); }
   G.zone = null;
   G.round++;
   G.stats.rounds++;
   arriveWaves(G, rng);
   let e = 0;
-  for (const h of standing(G)) { e = withHero(G, h, () => gainEnergy(G, derive(h).energyPerRound, true)); h.turn = freshTurnFor(h); }
+  for (const h of standing(G)) { // regen tapers: at or above half your max you gain half your Energy per Round
+    const epr = energyPerRound(h), gain = h.energy >= derive(h).maxEnergy / 2 ? Math.floor(epr / 2) : epr;
+    e = withHero(G, h, () => gainEnergy(G, gain, true)); h.turn = freshTurnFor(h);
+  }
   for (const h of G.party) if (h.hp <= 0) h.turn = { move: 0, acted: 'down', ware: true };
   // start the round with the first hero still standing
   G.active = Math.max(0, G.party.findIndex(h => h.hp > 0));

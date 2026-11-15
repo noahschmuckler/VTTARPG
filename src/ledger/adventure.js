@@ -46,8 +46,8 @@ export function scenePressure(adv, a, s) {
 export function partyPower(state, derive, partyDamagePerRound) {
   const heroes = state.order.map(id => state.characters[id]).filter(Boolean);
   let hp = 0, kills = 0;
-  for (const ch of heroes) { const s = derive(ch); hp += s.maxHp; kills += s.dice * 0.5 + s.dice / 6 * (s.cleave || 0); }
-  return { dpr: partyDamagePerRound(state, 0), hp, kills: Math.round(kills * 10) / 10, heroes: heroes.length, round: state.round };
+  for (const ch of heroes.filter(c => !c.away)) { const s = derive(ch); hp += s.maxHp; kills += s.dice * 0.5 + s.dice / 6 * (s.cleave || 0); }
+  return { dpr: partyDamagePerRound(state, 0), hp, kills: Math.round(kills * 10) / 10, heroes: heroes.filter(c => !c.away).length, round: state.round };
 }
 
 const r10 = x => Math.round(x / 10) * 10;
@@ -82,7 +82,7 @@ export function planScene(adv, a, s, anchor) {
     const armor = f.armor ?? (boss ? 35 : 20);
     // armor cuts every hit, so size health against the damage that actually gets through
     const hp = Math.max(boss ? 4000 : 1000, r500((anchor.dpr || 3000) * (1 - armor / 100) * (boss ? BOSS_ROUNDS : ELITE_ROUNDS) * p * size));
-    return { type: 'spawn', etype: type, count: 1, name: f.name, hp, armor, attacks, damage, abilities: f.abilities || [], ability: f.ability || '' };
+    return { type: 'spawn', etype: type, count: 1, name: f.name, hp, armor, attacks, damage, abilities: f.abilities || [], ability: f.ability || '', at: f.at || 0, ...(f.wake ? { wake: f.wake } : {}) };
   };
   const minionNames = (sc.minions && sc.minions.length) ? sc.minions : ['Minion'];
   const minionSpawns = n => {
@@ -91,12 +91,33 @@ export function planScene(adv, a, s, anchor) {
     return Object.entries(by).map(([name, count]) => ({ type: 'spawn', etype: 'minion', count, name }));
   };
   const rest = minionTotal - first, later = waves - 1;
-  const out = [{ at: 0, spawns: [...bosses.map(b => big(b, 'boss')), ...elites.map(e => big(e, 'elite')), ...minionSpawns(first)] }];
+  const bigs = [...bosses.map(b => big(b, 'boss')), ...elites.map(e => big(e, 'elite'))];
+  const out = [{ at: 0, spawns: [...bigs.filter(b => !b.at), ...minionSpawns(first)] }];
   for (let w = 1; w <= later; w++) {
     const n = Math.floor(rest / later) + (w <= rest % later ? 1 : 0);
     if (n > 0) out.push({ at: w, spawns: minionSpawns(n) });
   }
+  for (const b of bigs.filter(b => b.at)) {           // staged foes: they arrive at a later End round
+    let w = out.find(x => x.at === b.at);
+    if (!w) { w = { at: b.at, spawns: [] }; out.push(w); }
+    w.spawns.unshift(b);
+  }
+  out.sort((x, y) => x.at - y.at);
   return { pressure: p, template: T.label, minions: minionTotal, waves: out.filter(w => w.spawns.length) };
+}
+
+// Foes a narration beat brings in mid-scene, sized like the scene's own (same act anchor and pressure).
+export function planBeat(adv, a, s, anchor, beat, heroes) {
+  const out = [];
+  if (beat.elites?.length) {
+    // size them alongside the scene's own big foes, so they share the threat instead of taking all of it
+    const sc = adv.acts[a].scenes[s];
+    const tmp = { ...adv, acts: adv.acts.map((act, ai) => ai !== a ? act : { ...act, scenes: act.scenes.map((x, si) => si !== s ? x : { ...x, template: 'story', elites: [...(sc.elites || []), ...beat.elites], bosses: sc.bosses || [], minions: [] }) }) };
+    const all = planScene(tmp, a, s, anchor).waves[0]?.spawns || [];
+    out.push(...all.filter(x => x.etype === 'elite').slice(-beat.elites.reduce((t, f) => t + Math.max(1, f.count || 1), 0)));
+  }
+  if (beat.minions) out.push({ type: 'spawn', etype: 'minion', count: beat.minions.perHero * Math.max(1, heroes), name: beat.minions.name });
+  return out;
 }
 
 // Readable one-line summary of a planned wave.
@@ -108,7 +129,7 @@ function cleanFoe(f, abilityKeys) {
   return {
     name: str(f.name || 'Foe', 40), count: Math.max(1, Math.min(Number(f.count) || 1, 8)), size: Math.max(0.2, Math.min(Number(f.size) || 1, 4)),
     abilities: (f.abilities || []).filter(k => abilityKeys.includes(k)), ability: str(f.ability, 140),
-    ...(f.attacks ? { attacks: Math.max(1, Math.min(Number(f.attacks), 6)) } : {}), ...(f.armor != null && f.armor !== '' ? { armor: Math.max(0, Math.min(Number(f.armor) || 0, 90)) } : {}),
+    ...(f.attacks ? { attacks: Math.max(1, Math.min(Number(f.attacks), 6)) } : {}), ...(f.at ? { at: Math.max(0, Math.min(Math.round(Number(f.at)) || 0, 12)) } : {}), ...(f.wake ? { wake: str(f.wake, 600) } : {}), ...(f.armor != null && f.armor !== '' ? { armor: Math.max(0, Math.min(Number(f.armor) || 0, 90)) } : {}),
   };
 }
 export function cleanAdventure(a, abilityKeys) {
@@ -123,7 +144,10 @@ export function cleanAdventure(a, abilityKeys) {
       elites: (sc.elites || []).slice(0, 6).map(f => cleanFoe(f, abilityKeys)),
       bosses: (sc.bosses || []).slice(0, 3).map(f => cleanFoe(f, abilityKeys)),
       intro: str(sc.intro, 1500), outro: str(sc.outro, 1500), notes: str(sc.notes, 400),
-      beats: (sc.beats || []).slice(0, 8).map(b => ({ label: str(b.label || 'Beat', 30), text: str(b.text, 1500) })).filter(b => b.text),
+      beats: (sc.beats || []).slice(0, 8).map(b => ({ label: str(b.label || 'Beat', 30), text: str(b.text, 1500),
+        ...(b.elites?.length ? { elites: b.elites.slice(0, 6).map(f => cleanFoe(f, abilityKeys)) } : {}),
+        ...(b.minions?.name ? { minions: { name: str(b.minions.name, 30), perHero: Math.max(1, Math.min(Number(b.minions.perHero) || 1, 4)) } } : {}),
+        ...(b.repeat ? { repeat: true } : {}) })).filter(b => b.text || b.elites || b.minions),
     })),
   })).filter(act => act.scenes.length);
   if (!acts.length) throw new Error('Add at least one act with a scene');
@@ -144,13 +168,15 @@ export function parseFoes(text, abilities) {
     const abil = colon < 0 ? '' : head.slice(colon + 1);
     let count = 1, size = 1;
     name = name.replace(/\s+[x×](\d+)\b/i, (_, n) => { count = Number(n); return ''; });
-    name = name.replace(/\s+@\s*([\d.]+)/, (_, n) => { size = Number(n); return ''; }).trim();
+    let at = 0;
+    name = name.replace(/\s+@\s*([\d.]+)/, (_, n) => { size = Number(n); return ''; });
+    name = name.replace(/\s+\+(\d+)\b/, (_, n) => { at = Number(n); return ''; }).trim();
     const keys = abil.split(',').map(x => byName[x.trim().toLowerCase()]).filter(Boolean);
-    return { name: name || 'Foe', count, size, abilities: keys, ability };
+    return { name: name || 'Foe', count, size, abilities: keys, ability, ...(at ? { at } : {}) };
   });
 }
 export function formatFoes(list) {
-  return (list || []).map(f => `${f.name}${f.count > 1 ? ` x${f.count}` : ''}${f.size && f.size !== 1 ? ` @${f.size}` : ''}${f.abilities?.length ? ': ' + f.abilities.join(', ') : ''}${f.ability ? ' | ' + f.ability : ''}`).join('\n');
+  return (list || []).map(f => `${f.name}${f.count > 1 ? ` x${f.count}` : ''}${f.size && f.size !== 1 ? ` @${f.size}` : ''}${f.at ? ` +${f.at}` : ''}${f.abilities?.length ? ': ' + f.abilities.join(', ') : ''}${f.ability ? ' | ' + f.ability : ''}`).join('\n');
 }
 
 // Narration beats, one per line:  Label | text   (sent from Headquarters while the scene runs)
@@ -183,9 +209,33 @@ export const EIGHTH_GATE = {
         beats: [{"label": "The Clot feeds", "text": "More zombies shamble in through the north gate, slack-jawed and swaying. A surge of spores rolls off the mushrooms in a glittering wave and breaks over the Clot. Its white threads lash out like fishing lines, hook the two nearest zombies and reel them in. They fold into its mass with a wet crunch, and the wounds you've cut into it knit closed over them. The Clot is bigger than it was. As long as those mushrooms keep breathing, it'll keep doing that."}, {"label": "Mushroom 1 pops", "text": "The mushroom splits with a sound like a wet drum and collapses in a puff of dead grey dust. The haze over the Clot thins, and one strand of its white webbing goes slack. The Clot shudders, as if it felt that."}, {"label": "Mushroom 2 pops", "text": "A second mushroom bursts. The spore stream is a trickle now. Where the Clot's wounds were knitting, they stop, and weep instead."}, {"label": "Last mushroom", "text": "The last mushroom ruptures and the glittering haze simply stops. The Clot's white threads blacken and curl like burnt hair. Bodies at its edges begin to slump away from it, and its wounds stay open. It can't heal any more, and it knows it. It screams with every mouth it has."}, {"label": "The Horde", "text": "The Clot convulses and splits along a seam. Zombies tumble out of it by the armful, half-formed and furious, and throw themselves at you."}] },
     ] },
     { name: 'Act III · The Peak', scenes: [
-      { name: 'The Climb', template: 'skirmish', chests: 1, minions: ['Frozen Dead'], notes: 'Last campfire: heal, and a stall visit.' },
-      { name: 'The Seals', template: 'elitepack', chests: 1, minions: ['Frozen Dead'], elites: [F('Green Slaad', ['sweep'], 'Holds Seal I'), F('Skelespider', ['leech'], 'Holds Seal II'), F('Relentless Killer', ['enrage', 'stoneskin'], 'Holds Seal III')] },
-      { name: 'The Kraken', template: 'boss', chests: 1, minions: ['Frozen Dead'], elites: [F('Tentacle', ['leech'], 'Lay it down on a hero in reach: grabbed.', { count: 4, size: 0.4, attacks: 1 })], bosses: [F('The Kraken', ['sweep', 'enrage', 'horde', 'throes'], 'On a 5-6 at End round it dives and rises in another circle.')],
+      { name: 'The Last Campfire', template: 'story', chests: 0,
+        notes: 'Full heal: tap Full on each hero card. Open the Rakshasa\'s stall if you like. Then begin The Seals.',
+        intro: "The tunnel ends in a blast of white. You climb out onto the mountain's shoulder, where the wind screams over a field of blue ice, and someone has left a fire burning in a ring of black stones. Above you the ice rises in terraces toward a great gate of carved green stone set into the peak. Three glowing seals hold it shut. Below the seals, the ice is cracked, and red light seeps from the cracks like blood under skin. For now, nothing moves. Warm your hands. It won't last." },
+      { name: 'The Seals', template: 'elitepack', chests: 1, minions: ['Frozen Dead'],
+        elites: [F('Green Slaad', ['sweep'], 'Holds Seal I'),
+          F('Skelespider', ['leech'], 'Holds Seal II', { at: 2, wake: 'Seal II flares violet. On its frozen plinth the skeletal spider twitches, then unfolds leg by leg, and turns every one of its empty eye sockets toward you.' }),
+          F('Relentless Killer', ['enrage', 'stoneskin'], 'Holds Seal III', { at: 4, wake: 'Seal III blazes. The figure on the last plinth, still as a statue until now, takes one step down onto the ice. Then another. It does not hurry. It never has.' })],
+        notes: 'Guards wake in turn (automatic): the Slaad now, the Skelespider at End round 2, the Killer at End round 4. While any seal holds: tap "The dead leak" at every End round (1 Frozen Dead per hero). Send a seal beat as each guard falls. All three down: Scene clear, then full heal.',
+        intro: "The seals blaze as you step onto the field. Three guardians stand on frozen plinths, but only one is awake: a hulking green slaad at Seal I, croaking as it turns toward you. Beside Seal II a skeletal spider lies folded and still. At Seal III a figure waits like a statue. Under your boots, the red cracks split wider, and something cold and grey begins to climb out.",
+        beats: [
+          { label: 'The dead leak', repeat: true, minions: { name: 'Frozen Dead', perHero: 1 }, text: "The red cracks pulse, and the frozen dead claw their way up through the ice, one for each of you." },
+          { label: 'Seal I breaks', text: "Seal I shatters with a sound like a bell cracking. High on the gate, a carved stone eyelid lifts, just a sliver. Something behind it is watching now." },
+          { label: 'Seal II breaks', text: "Seal II goes out like a snuffed candle. The stone eye on the gate opens wider, and the cracks under your feet stop bleeding red and start to glow a cold, sick green." },
+          { label: 'Seal III breaks', text: "The last seal dies. The eye on the gate opens fully, and the whole mountain shudders. The gate grinds apart, and beyond it lies a vast sheet of black ice pocked with round holes, like a frozen lake that has been breathing. The cracks stop leaking. In the sudden silence, you have a moment. Take it." },
+        ] },
+      { name: 'The Tentacles', template: 'elitepack', chests: 0, minions: ['Frozen Dead'],
+        elites: [F('Tentacle', ['leech'], 'Reach: a 7″ × 4″ L. End your move in it and it is laid on you: grabbed (Break Away to leave).', { count: 3, size: 0.5, attacks: 1 })],
+        notes: 'The Kraken sits submerged in the Coil: it cannot be targeted yet. Grab rule: a hero who ends their move in a tentacle\'s reach gets it laid on them (set it engaged with them). When the last tentacle falls: Scene clear, then begin The Kraken.',
+        intro: "You step through the gate onto the black ice. Under it, in the middle of the lake, something enormous turns over in its sleep, and the ice in the Coil bulges upward. Then the holes erupt. Three tentacles as thick as tree trunks burst into the air, coiling and searching, and slap down onto the ice around you." },
+      { name: 'The Kraken', template: 'boss', chests: 1, minions: ['Frozen Dead'],
+        bosses: [F('The Kraken', ['sweep', 'enrage', 'horde', 'throes', 'drown'], 'On a 5-6 at End round it dives and rises in another circle. At half health, 2 tentacles regrow.')],
+        notes: 'Dive: each End round roll a d6. On 5-6 it sinks and rises in another circle: move the base and set it roaming (⇄), ending every engagement. At half health tap "Tentacles regrow" (2 tentacles, sized to the fight).',
+        intro: "The last tentacle falls, and for a heartbeat there is nothing. Then the ice in the Coil explodes upward and the Kraken rises: a mountain of grey-green flesh, a beak like a ship's prow, and one huge eye that finds each of you in turn. It is the thing the seals were keeping in. It is the thing the dead were serving. And it is very, very awake.",
+        beats: [
+          { label: 'It dives', repeat: true, text: "The Kraken sinks straight down through the ice as if it were water. The lake goes still... and then another circle bursts open as it rises somewhere else." },
+          { label: 'Tentacles regrow', elites: [F('Tentacle', ['leech'], 'Reach: a 7″ × 4″ L. End your move in it and it is laid on you: grabbed.', { count: 2, size: 0.5, attacks: 1 })], text: "Black ichor pours from the Kraken's wounds and freezes into new limbs. Two fresh tentacles tear up through the holes beside it, still steaming." },
+        ],
         outro: 'The Kraken\'s last tentacle goes slack, and the great carved eye in the gate slowly closes. Behind the gate a staircase of dark polished wood winds downward, and from far below comes the scratch of a thousand pens. At the top of the stair, on a crate he definitely did not have a minute ago, sits the Rakshasa, holding a contract tied with red ribbon. "Lovely work, that. Now. Who here can read fine print?"' },
     ] },
     { name: 'Act IV · The Ledger Hall', scenes: [

@@ -11,6 +11,12 @@ export function botTurn(G, rng) {
 const score = x => (x ? Object.entries(x.stats).reduce((t, [k, v]) => t + v * ({ damage: 2, maxHp: 1, armor: 30, dice: 400, critMult: 200, cleave: 150 }[k] || 5), 0) + (x.set ? 300 : 0) : -1);
 function heroTurn(G, rng) {
   if (G.pit) { R.climb(G, rng); return; }
+  // the Runepriest's reactions on this hero: mend when low, haste when about to attack
+  for (const p of R.priestsOf(G)) {
+    if (p === G.hero) continue;
+    R.react(G, p.hid, 'mending', G.hero.hid);
+    if (R.foesInReach(G).length && p.energy >= 70) R.react(G, p.hid, 'haste', G.hero.hid);
+  }
   for (const it of [...G.bag]) if (score(it) > score(G.hero.gear[it.slot])) R.equip(G, it.id);
   const s = R.heroStats(G);
   if (G.hero.hp < s.maxHp * 0.4) { const w = G.wares.find(c => c.key === 'draught'); if (w) R.useWare(G, w.id, rng); }
@@ -47,6 +53,11 @@ function heroTurn(G, rng) {
       const t = R.foesInReach(G).sort((a, b) => (b.type !== 'minion') - (a.type !== 'minion') || a.hp - b.hp);
       const target = G.strike.minion && !G.strike.hits && !G.strike.crits ? t.find(f => f.type === 'minion') : t[0];
       if (!target || !R.spend(G, target.id, rng).ok) break;
+    }
+    // Surge for a second attack when there is energy to spare and something left to hit
+    if (R.canSurge(G) && G.hero.energy >= 85 && R.foesInReach(G).length) {
+      R.surge(G); R.attack(G, rng);
+      for (let guard = 0; guard < 40 && R.strikeLeft(G); guard++) { const t = R.foesInReach(G).sort((a, b) => a.hp - b.hp)[0]; if (!t || !R.spend(G, t.id, rng).ok) break; }
     }
   } else if (!G.turn.acted && !R.foesInReach(G).length) {
     R.sprint(G);
