@@ -105,14 +105,21 @@ export class View {
       const dx = Math.abs(w.x - c.x) / HW, dy = Math.abs(w.y - c.y) / HH;
       if (dx + dy <= 1 && (!best || x + y > best.x + best.y)) best = { x, y };
     }
-    // also allow clicking a unit's body (not when aiming at a square)
-    if (bodies) for (const d of this.disp.values()) {
-      if (d.alpha < 0.3) continue;
-      const c = this.iso(d.x, d.y, d.e);
-      if (Math.abs(w.x - c.x) < 22 && w.y < c.y + 10 && w.y > c.y - 70) {
-        const rx = Math.round(d.x), ry = Math.round(d.y);
-        if (!best || rx + ry >= best.x + best.y - 1) best = { x: rx, y: ry };
+    // also allow tapping a unit's body (not when aiming at a square). Where bodies overlap, a foe wins over a hero
+    // (foes are what you tap to attack or target; heroes are always one tap away in the party strip), then the body
+    // whose middle is nearest the tap.
+    if (bodies) {
+      let hit = null;
+      for (const d of this.disp.values()) {
+        if (d.alpha < 0.3) continue;
+        const u = this.unit(d.id); if (!u) continue;
+        const c = this.iso(d.x, d.y, d.e);
+        const h = d.hero ? 78 : Math.min(130, 58 * (u.scale || 1)), half = d.hero ? 20 : Math.min(48, 20 * (u.scale || 1));
+        if (Math.abs(w.x - c.x) > half || w.y > c.y + 12 || w.y < c.y - h) continue;
+        const score = (d.hero ? 1000 : 0) + Math.hypot(w.x - c.x, w.y - (c.y - h / 2));
+        if (!hit || score < hit.score) hit = { score, x: Math.round(d.x), y: Math.round(d.y) };
       }
+      if (hit) return { x: hit.x, y: hit.y };
     }
     return best;
   }
@@ -360,9 +367,19 @@ export class View {
     if (dl > 0) this.cliff(c.x - HW, c.y, c.x, c.y + HH, dl * EH, 0.62, below(x, y + 1) === -DEPTH);
     if (dr > 0) this.cliff(c.x, c.y + HH, c.x + HW, c.y, dr * EH, 0.45, below(x + 1, y) === -DEPTH);
     this.img(`${t.floor}_${t.d}`, c.x, c.y);
-    if (t.e > 0) { // a lighter rim so raised ground reads at a glance
-      g.strokeStyle = 'rgba(255,240,200,0.18)'; g.lineWidth = 1.5;
-      this.face([c.x - HW, c.y, c.x, c.y - HH, c.x + HW, c.y, c.x, c.y + HH]); g.stroke();
+    if (t.e > 0) { // raised ground: lighter by level, with a bright lip on every side that drops away
+      g.save();
+      this.face([c.x - HW, c.y, c.x, c.y - HH, c.x + HW, c.y, c.x, c.y + HH], `rgba(255,246,225,${0.13 + 0.09 * t.e})`);
+      const lower = (nx, ny) => { const n = tile(m, nx, ny); return !n || n.kind === 'chasm' || n.e < t.e; };
+      const N = [c.x, c.y - HH], E = [c.x + HW, c.y], S = [c.x, c.y + HH], W = [c.x - HW, c.y];
+      const sides = [[lower(x, y - 1), N, E], [lower(x + 1, y), E, S], [lower(x, y + 1), S, W], [lower(x - 1, y), W, N]];
+      g.lineCap = 'round';
+      for (const [drop, a, b] of sides) {
+        if (!drop) continue;
+        g.strokeStyle = 'rgba(40,24,10,0.55)'; g.lineWidth = 4; g.beginPath(); g.moveTo(a[0], a[1] + 2); g.lineTo(b[0], b[1] + 2); g.stroke();
+        g.strokeStyle = 'rgba(255,244,214,0.9)'; g.lineWidth = 2; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+      }
+      g.restore();
     }
     this.overlayAt(x, y, t.e);
     if (this.G.map.exit.x === x && this.G.map.exit.y === y && this.G.cleared) {
@@ -454,6 +471,8 @@ export class View {
     c.y += d.sink;
     const scale = (isHero ? 0.56 : (u?.scale || 1) * 1.05) * (M.scale || 1); // M.scale: sheets stored below full size
     let alpha = d.alpha * (isHero && H.hidden ? 0.45 : 1);
+    const screening = isHero && this.G.foes.some(f => !f.dead && f.x + f.y < d.x + d.y && f.x + f.y >= d.x + d.y - 2 && Math.abs((f.x - f.y) - (d.x - d.y)) <= 1);
+    if (screening) alpha *= 0.62; // a foe just behind: let it show through
     if (isHero && H.pit) c.y += 6;
     // shadow + ring
     g.save();
@@ -518,7 +537,7 @@ export class View {
         g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(c.x - w / 2 - 1, top + 5, w + 2, 6);
         g.fillStyle = hp / mx > 0.35 ? '#5fc35f' : '#e0503c'; g.fillRect(c.x - w / 2, top + 6, w * Math.max(0, hp / mx), 4);
       }
-      if (G.party.length > 1) {
+      if (G.party.length > 1 && !screening) { // the name would sit on the foe behind
         g.font = `${active ? 700 : 600} 11px "Cinzel", Georgia, serif`; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.85)';
         g.strokeText(H.name, c.x, top - 16); g.fillStyle = active ? '#fff6d0' : HERO_COLOR[H.cls]; g.fillText(H.name, c.x, top - 16);
       }
