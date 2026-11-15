@@ -115,8 +115,8 @@ for name, (fn, fs, anims, sc) in FLARE.items():
         meta[a] = [col, count]
         col += count
     s = round(fs * sc)
-    # sheet row for canonical direction d is (base - d) mod 8; the johndh renders turn the other way round
-    pack(name, rows, meta, s, s, (s / 2, s * 0.75), 6 if name in ('orc', 'orcHeavy', 'orcElite', 'archer', 'spider', 'spiderGiant', 'werebear') else 4)
+    # rows were checked against the front (facing the viewer) and back views of each sheet
+    pack(name, rows, meta, s, s, (s / 2, s * 0.75), {'werebear': 6}.get(name, 4))
 
 with open(os.path.join(OUT, 'manifest.json'), 'w') as fh:
     json.dump(manifest, fh, separators=(',', ':'))

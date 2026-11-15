@@ -408,7 +408,7 @@ const SPECS = {
   blink: { mode: 'tile', range: 6, any: true, text: 'Pick any square within 6, at any height.' },
   well: { mode: 'point', range: 8, sight: true, radius: 3, void: true, text: 'Pick a point within 8 in sight (a chasm works: foes are dragged over the edge).' },
   meteor: { mode: 'point', range: 10, radius: 2, text: 'Pick a point within 10.' },
-  step: { mode: 'foe', range: 6, sight: false, strike: true, text: 'Pick a foe within 6: you appear behind it, then attack.' },
+  step: { mode: 'foe', range: 6, sight: false, strike: true, landing: true, text: 'Pick a foe within 6, then the square beside it to appear on; then attack.' },
   smoke: { mode: 'self', text: 'Vanish into smoke.' },
 };
 // What each class power does in this game (the Ledger's own text is written for a tabletop).
@@ -425,7 +425,7 @@ const DESC = {
   blink: 'Teleport up to 6 squares, to any height and through anything, with no free blows. Gain a 200 ward.',
   well: 'Pick a point within 8 squares in sight: every foe within 3 of it is dragged toward it and pinned until the next round. Aim it into a chasm and they are dragged over the edge: minions are gone, elites claw back out hurt (bosses hold on). +2 dice on your next attack.',
   meteor: 'Pick a point within 10 squares: every foe within 2 of it takes 2 hits (minions are slain).',
-  step: 'Teleport behind a foe within 6 squares, with no free blows. Then attack in the same action for triple damage.',
+  step: 'Pick a foe within 6 squares and any free square beside it: you teleport there, with no free blows. Then attack in the same action for triple damage.',
   smoke: 'Become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
 };
 export const powerText = p => DESC[p.key] || p.text;
@@ -473,7 +473,16 @@ export function powerTargets(G, p) {
   }
   return out;
 }
-// Use a power. target: { x, y } for squares and points, { ids: [...] } for foes; nothing for self.
+// Free squares beside a foe that Shadowstep can land on (any height: it is a teleport).
+export function landingSpots(G, f) {
+  const out = [];
+  for (const [dx, dy] of DIRS8) {
+    const x = f.x + dx, y = f.y + dy, t = tile(G.map, x, y);
+    if (standable(t) && !occupied(G, x, y, 'hero')) out.push({ x, y });
+  }
+  return out;
+}
+// Use a power. target: { x, y } for squares and points, { ids: [...] } for foes (Shadowstep: { ids, x, y }); nothing for self.
 export function usePower(G, keyName, target, rng) {
   const p = powerList(G).find(q => q.key === keyName);
   if (!p) return err('Unknown power');
@@ -581,9 +590,11 @@ export function usePower(G, keyName, target, rng) {
       break;
     }
     case 'step': {
-      const f = foes[0], d = dirFrom(G.pos, f);
-      const behind = { x: f.x + d[0], y: f.y + d[1] };
-      const spot = standable(tile(G.map, behind.x, behind.y)) && !occupied(G, behind.x, behind.y, 'hero') ? behind : closestFree(G, f, G.pos, 1);
+      const f = foes[0];
+      // the square the player picked beside the foe; without one, the far side of the foe from you
+      const picked = target && target.x != null && landingSpots(G, f).find(c => c.x === target.x && c.y === target.y);
+      const d = dirFrom(G.pos, f), behind = { x: f.x + d[0], y: f.y + d[1] };
+      const spot = picked || (landingSpots(G, f).find(c => c.x === behind.x && c.y === behind.y)) || closestFree(G, f, G.pos, 1);
       if (spot) { const from = { ...G.pos }; G.pos = spot; fx(G, { t: 'move', id: G.hero.hid, path: [from, spot], kind: 'blink' }); fx(G, { t: 'face', id: G.hero.hid, at: { x: f.x, y: f.y } }); }
       break;
     }

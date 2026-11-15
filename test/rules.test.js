@@ -207,3 +207,18 @@ test('the armory moves and swaps gear between heroes and previews what changes',
   const sp = R.synergyProgress(G).find(s => s.key === 'forgeflame');
   assert.ok(sp.pool.thunderforge >= 1 && sp.pool.emberheart >= 2);
 });
+
+test('Shadowstep lands on the square beside the target that the player picks', () => {
+  const rng = rngFrom(61), G = R.newRun('Vex', 'shadowblade', rng);
+  R.startScene(G, rng);
+  const { x, y } = G.pos;
+  for (let dx = -5; dx <= 0; dx++) for (let dy = -2; dy <= 0; dy++) Object.assign(tile(G.map, x + dx, y + dy), { kind: 'floor', prop: null, e: 0 });
+  G.foes = [{ id: 'f', name: 'Grunt', type: 'elite', x: x - 3, y: y - 1, hp: 3000, maxHp: 3000, armor: 0, damage: 50, attacks: 1, move: 4, reach: 1, abilities: [] }];
+  G.waves = []; G.hero.energy = 100;
+  const spots = R.landingSpots(G, G.foes[0]);
+  assert.ok(spots.length >= 6);
+  const pick = spots.find(s => s.x === x - 4 && s.y === y - 2);
+  assert.ok(R.usePower(G, 'step', { ids: ['f'], x: pick.x, y: pick.y }, rng).ok);
+  assert.deepEqual(G.pos, { x: x - 4, y: y - 2 });
+  assert.ok(R.canAttack(G), 'and the attack is open');
+});

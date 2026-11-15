@@ -68,6 +68,8 @@ export class View {
     if (!u) return null;
     const e = this.elev(u.x, u.y);
     const d = { id, x: u.x, y: u.y, e, dir: isHeroId(id) ? 5 : 1, anim: 'idle', at: Math.random() * 3, once: null, alpha: u.hero && u.hero.hp <= 0 ? 0.3 : 1, flash: 0, sink: 0, hp: u.hp, maxHp: u.maxHp, hero: isHeroId(id) };
+    const opp = u.hero ? this.G.foes.filter(f => !f.dead) : this.G.party.filter(h => h.hp > 0 && h.pos).map(h => h.pos);
+    if (opp.length) d.dir = this.dirTo(d, opp.reduce((a, b) => (Math.hypot(b.x - u.x, b.y - u.y) < Math.hypot(a.x - u.x, a.y - u.y) ? b : a))); // face the nearest opponent on arrival
     if (u.hero && u.hero.hp <= 0) { d.anim = 'die'; d.once = { dur: 0.7, hold: true }; d.at = 1; } // already down: lying there
     this.disp.set(id, d);
     return d;
@@ -194,6 +196,18 @@ export class View {
     }
   }
   once(d, anim, dur, hold = false) { d.anim = anim; d.at = 0; d.once = { dur, hold }; }
+  // Everyone at rest looks at the nearest opponent: heroes at the nearest foe, foes at the nearest standing hero.
+  faceOpponents() {
+    const G = this.G; if (!G?.map) return;
+    const heroes = G.party.filter(h => h.hp > 0 && h.pos), foes = G.foes.filter(f => !f.dead);
+    for (const d of this.disp.values()) {
+      if (d.anim !== 'idle' || d.once || d.alpha < 0.5) continue;
+      const others = d.hero ? foes : heroes;
+      let best = null, bd = Infinity;
+      for (const o of others) { const p = o.pos || o; const k = Math.max(Math.abs(p.x - d.x), Math.abs(p.y - d.y)); if (k < bd) { bd = k; best = p; } }
+      if (best) d.dir = this.dirTo(d, best);
+    }
+  }
   dirTo(from, to) {
     const a = this.iso(from.x, from.y), b = this.iso(to.x, to.y);
     const ang = Math.atan2(b.y - a.y, b.x - a.x);

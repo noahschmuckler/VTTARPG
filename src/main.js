@@ -213,6 +213,7 @@ function enterScene() {
   $('#log').innerHTML = '';
   for (const l of G.log.slice(0, 8).reverse()) addLog(l.text, l.kind);
   view.attach(G);
+  view.faceOpponents();
   mode = { kind: 'idle' };
   refresh();
 }
@@ -259,6 +260,7 @@ async function act(fn, { quiet = false } = {}) {
   if (r && !r.ok) { if (!quiet) toast(r.error, '', 'err'); G.fx.length = 0; busy = false; shown = view.shown = null; refresh(); return r; }
   refresh();
   await playFx();
+  view.faceOpponents();
   shown = view.shown = null;
   busy = false;
   if (mode.kind === 'power' && !R.powerUsable(G, mode.p) && !mode.keep) mode = { kind: 'idle' };
@@ -447,7 +449,8 @@ function refresh(light = false) {
     const spec = R.powerSpec(G, mode.p);
     const usable = R.powerUsable(G, mode.p), none = spec.mode !== 'self' && !R.powerTargets(G, mode.p).length;
     const why = !usable ? (G.hero.energy < mode.p.cost ? `Needs ${mode.p.cost} energy (you have ${G.hero.energy}).` : 'You have already acted this turn.') : none ? 'Nothing in range from here: move first.' : '';
-    const howTo = spec.mode !== 'self' || R.powerText(mode.p) === mode.p.text ? (spec.text !== mode.p.text ? spec.text : '') : '';
+    const stepFoe = spec.landing && mode.foe && G.foes.find(f => f.id === mode.foe);
+    const howTo = stepFoe ? `Now pick the square beside ${stepFoe.name} to appear on (tap another foe to switch).` : spec.mode !== 'self' || R.powerText(mode.p) === mode.p.text ? (spec.text !== mode.p.text ? spec.text : '') : '';
     tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(mode.p.name)} <span class="dim" style="font:12px var(--sans)">${mode.p.cost} energy</span></b><span class="desc">${esc(R.powerText(mode.p))}${why ? `<br><span style="color:var(--bad)">${esc(why)}</span>` : howTo ? `<br><span style="color:var(--brass2)">▸ ${esc(howTo)}</span>` : ''}</span>${spec.mode === 'foes' ? `<button class="primary" id="tgGo" ${mode.picked.length ? '' : 'disabled'}>Confirm (${mode.picked.length})</button>` : ''}${spec.mode === 'self' ? `<button class="primary" id="tgGo" ${usable ? '' : 'disabled'}>Use ${esc(mode.p.name)}</button>` : ''}<button id="tgX">Cancel <kbd>Esc</kbd></button>`;
     tg.querySelector('#tgX').onclick = cancelMode;
     const go = tg.querySelector('#tgGo');
@@ -480,8 +483,10 @@ function updateHighlights() {
   if (busy || G.stage !== 'scene') { view.hl = { hover: hover && { ...hover } }; return; }
   if (mode.kind === 'power') {
     const spec = R.powerSpec(G, mode.p);
-    const targets = R.powerTargets(G, mode.p);
+    const landFoe = spec.landing && mode.foe && G.foes.find(f => f.id === mode.foe && !f.dead);
+    const targets = landFoe ? R.landingSpots(G, landFoe) : R.powerTargets(G, mode.p);
     hl.targets = new Set(targets.map(c => key(c.x, c.y)));
+    if (landFoe) hl.picked = new Set([key(landFoe.x, landFoe.y)]);
     hl.allyTargets = new Set(targets.filter(c => c.ally).map(c => c.id));
     if (spec.mode === 'self' && spec.radius) hl.area = areaKeys(G.pos, spec.radius);
     if (spec.mode === 'point' && hover && hl.targets.has(key(hover.x, hover.y))) hl.area = areaKeys(hover, spec.radius);
@@ -551,8 +556,12 @@ function intentFor(t) {
     if (!R.powerUsable(G, mode.p)) return null;
     if (spec.mode === 'self') return spec.radius && dist(t, G.pos) <= spec.radius ? `Use ${mode.p.name}` : null; // a tap in the shown area asks first
     const f = R.foeAt(G, t.x, t.y), ally = R.heroAt(G, t.x, t.y);
+    if (spec.landing && mode.foe) {
+      const tf = G.foes.find(q => q.id === mode.foe && !q.dead);
+      if (tf && R.landingSpots(G, tf).some(c => c.x === t.x && c.y === t.y)) return `${mode.p.name}: appear here`;
+    }
     if (spec.mode === 'foe' || spec.mode === 'foes') {
-      if (f && valid.some(c => c.id === f.id)) return `${mode.p.name}: ${f.name}`;
+      if (f && valid.some(c => c.id === f.id)) return spec.landing ? `Target ${f.name}` : `${mode.p.name}: ${f.name}`;
       if (ally && valid.some(c => c.id === ally.hid)) return `${mode.p.name}: ${ally.name}`;
       return null;
     }
@@ -635,6 +644,7 @@ function bindInput() {
     const f = t && R.foeAt(G, t.x, t.y);
     if (f && R.strikeLeft(G) && mode.kind === 'idle' && R.inReach(G, G.pos, f, R.heroReach(G))) { clearSel(); clickTile(t); return; }
     if (t && sel && t.x === sel.x && t.y === sel.y && intentFor(t)) { clearSel(); clickTile(t); return; }
+    if (t && mode.kind === 'power' && R.powerSpec(G, mode.p).landing && R.foeAt(G, t.x, t.y)) { clearSel(); clickTile(t); return; } // choosing Shadowstep's target spends nothing
     const mate = t && mode.kind === 'idle' && R.heroAt(G, t.x, t.y);
     if (mate && mate !== G.hero) { clearSel(); switchHero(G.party.indexOf(mate)); return; } // one tap switches heroes
     selectTile(t);
@@ -667,7 +677,7 @@ function bindInput() {
   $('#modal').addEventListener('pointerdown', e => { if (e.target.id === 'modal' && $('#modal .close')) closeModal(); });
 }
 // Square-targeted powers (leap, blink, meteor…) pick the square under the finger, never a unit standing in front of it.
-function aimingAtSquare() { return mode.kind === 'power' && ['tile', 'point', 'walk'].includes(R.powerSpec(G, mode.p).mode); }
+function aimingAtSquare() { return mode.kind === 'power' && (['tile', 'point', 'walk'].includes(R.powerSpec(G, mode.p).mode) || (R.powerSpec(G, mode.p).landing && !!mode.foe)); }
 function cancelMode() { if (mode.kind !== 'idle') { mode = { kind: 'idle' }; refresh(); } }
 // ------------------------------------------------------------------ the party
 // The next standing hero (after the active one) who still has something to do this round, or -1.
@@ -751,6 +761,13 @@ async function clickPower(t) {
   if (!R.powerUsable(G, p)) return;
   if (spec.mode === 'self') { if (spec.radius && dist(t, G.pos) <= spec.radius) return firePower(null); return; } // a deliberate click in the area (touch confirms first)
   const valid = R.powerTargets(G, p);
+  if (spec.landing) { // Shadowstep: first the foe, then the square beside it
+    const f = R.foeAt(G, t.x, t.y);
+    if (f && valid.some(c => c.id === f.id)) { mode.foe = f.id; return refresh(); }
+    const tf = mode.foe && G.foes.find(q => q.id === mode.foe && !q.dead);
+    if (tf && R.landingSpots(G, tf).some(c => c.x === t.x && c.y === t.y)) return firePower({ ids: [tf.id], x: t.x, y: t.y });
+    return toast(p.name, tf ? 'Pick a highlighted square beside the target.' : 'Pick a highlighted foe first.', 'err');
+  }
   if (spec.mode === 'foe' || spec.mode === 'foes') {
     const ally = R.heroAt(G, t.x, t.y);
     if (ally && valid.some(c => c.id === ally.hid)) return firePower({ ids: [ally.hid] });
