@@ -71,28 +71,20 @@ def pack(name, frames_by_dir, anims, fw, fh, anchor, base=4):
     sheet.quantize(256, method=Image.FASTOCTREE).save(os.path.join(OUT, 'units', name + '.png'), optimize=True)
     manifest['units'][name] = {'fw': cw, 'fh': ch, 'ax': anchor[0] - box[0], 'ay': anchor[1] - box[1], 'anims': anims, 'base': base}
 
-# The Kenney hero: Idle0, Run0-9, Pickup0-9 per direction (Kenney index: 0 NE, 1 E, 2 SE, 3 S, 4 SW, 5 W, 6 NW, 7 N).
-rows = []
-for d in range(8):
-    k = (d + 1) % 8
-    names = ['Idle0'] + [f'Run{i}' for i in range(10)] + [f'Pickup{i}' for i in range(10)]
-    row = []
-    for nm in names:
-        im = Image.open(os.path.join(KDIR, 'Characters', 'Male', f'Male_{k}_{nm}.png')).convert('RGBA')
-        row.append(im.resize((128, 256), Image.LANCZOS))
-    rows.append(row)
-pack('hero', rows, {'idle': [0, 1], 'run': [1, 10], 'act': [11, 10]}, 128, 256, (64, ANCHOR[1] * SCALE))
+# (The heroes come from tools/build_heroes.py, one sheet per calling.)
 
 # Flare sheets: one row per direction (Flare row: 0 W, 1 NW, 2 N, 3 NE, 4 E, 5 SE, 6 S, 7 SW), frames left to right.
 # spec: file, frame size, [(anim, first, count)], downscale, feet anchor within the frame (Flare: centre, ~3/4 down)
+# Spiders: frames 13–14 of their sheet are a rear-up that turns the body round, so it reads as attacking backwards;
+# their attack uses 15–17 (strike and lunge, facing the way they walk).
 FLARE = {
     'orc':      ('orc_regular_0.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 12, 4), ('hit', 20, 1), ('die', 20, 4)], 1.0),
     'orcHeavy': ('orc_heavy_1.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 12, 4), ('hit', 20, 1), ('die', 20, 4)], 1.0),
     'orcElite': ('orc_elite_0.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 24, 4), ('hit', 20, 1), ('die', 20, 4)], 1.0),
     'archer':   ('orc_archer_0.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 28, 4), ('hit', 20, 1), ('die', 20, 4)], 1.0),
     'slime':    ('slime_0.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 16, 6), ('hit', 24, 2), ('die', 26, 8)], 1.0),
-    'spider':   ('spider_0.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 12, 4), ('hit', 24, 1), ('die', 18, 6)], 1.0),
-    'spiderGiant': ('spider_giant.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 12, 4), ('hit', 24, 1), ('die', 18, 6)], 1.0),
+    'spider':   ('spider_0.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 15, 3), ('hit', 24, 1), ('die', 18, 6)], 1.0),
+    'spiderGiant': ('spider_giant.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 15, 3), ('hit', 24, 1), ('die', 18, 6)], 1.0),
     'werebear': ('werebear_brown_armor.png', 128, [('idle', 0, 4), ('run', 4, 8), ('attack', 12, 4), ('hit', 20, 1), ('die', 20, 4)], 1.0),
     'demon':    ('demon_0.png', 256, [('idle', 0, 4), ('run', 4, 8), ('attack', 12, 8), ('hit', 28, 2), ('die', 32, 10)], 0.5),
 }
