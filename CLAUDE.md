@@ -4,6 +4,9 @@
   the 2026-11-15 playtest rules). Don't edit it here;
   change the rules in ttarpg and copy them over. Solo-only rules live in `src/game/rules.js` (`SOLO`, `SPECS`), which
   re-implements damage, wards, energy and the foe phase for the grid: when ttarpg changes those, port them there too.
+  Next sync (ttarpg a8df56a and later) needs adapting first: the ledger now has Emberburst's burst/+1 die/faceBonus and
+  Hammer of the Deep as three powers ('hammer', 'hammerSlam', 'hammerThrow') plus Recall's areaHit. VTTARPG's rules.js
+  already does these itself (powersOf, hammerPower, the 'recall' case), so drop its copies or skip the ledger's.
 - Parties: `G.party` holds the heroes; `G.hero/pos/turn/strike/pit/hidden` are accessors onto the active one (`bindParty`,
   call it again after loading a save). Effects on another hero go through `withHero`. Hero fx ids are `h0`…`h3`.
 - `src/game/rules.js` is pure: no DOM. Everything visible goes through `G.fx`; `src/main.js` plays it via `View.play`.
