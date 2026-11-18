@@ -295,3 +295,55 @@ test('playtest rules: armour rating, crit pierce, sunder, ward layers, energy ta
   const k = R.heroStats(G).energyPerKill;
   assert.deepEqual(gains, [k, Math.floor(k / 2), Math.floor(k / 2), Math.floor(k / 4)]);
 });
+
+test('Emberburst bursts the target and its neighbours, then attacks with +1 die and +1 to every die', () => {
+  const rng = rngFrom(91), G = R.newRun('Orrin', 'arcanist', rng);
+  R.startScene(G, rng);
+  const { x, y } = G.pos;
+  for (let dx = -4; dx <= 0; dx++) for (let dy = -2; dy <= 0; dy++) Object.assign(tile(G.map, x + dx, y + dy), { kind: 'floor', prop: null, e: 0 });
+  const M = (id, fx_, fy, type = 'minion') => ({ id, name: id, type, x: fx_, y: fy, hp: type === 'minion' ? 1 : 5000, maxHp: 5000, armor: 0, damage: 1, attacks: 1, move: 1, reach: 1, abilities: [] });
+  G.foes = [M('e', x - 3, y - 1, 'elite'), M('a', x - 4, y - 1), M('b', x - 3, y - 2), M('far', 0, 0)];
+  G.waves = []; G.hero.energy = 100;
+  G.hero.gear.gloves = { id: 'w', name: 'Emberheart Wraps', base: 'x', slot: 'gloves', rarity: 'set', set: 'emberheart', stats: { damage: 1 } };
+  const eb = R.powerList(G).find(p => p.key === 'set:emberheart');
+  assert.ok(eb.attack && R.powerTargets(G, eb).some(t => t.id === 'e'));
+  assert.ok(R.usePower(G, 'set:emberheart', { ids: ['e'] }, rng).ok);
+  assert.ok(G.foes[1].dead && G.foes[2].dead, 'the burst killed the minions beside the target');
+  assert.ok(G.foes[0].hp < 5000, 'and hit the target');
+  assert.ok(!G.foes[3].dead);
+  assert.equal(R.attackPool(G).total, R.heroStats(G).dice + 1);
+  assert.ok(R.canAttack(G));
+  R.attack(G, rng);
+  const roll = G.fx.filter(e => e.t === 'dice').pop();
+  assert.equal(roll.hitOn, 3); assert.equal(roll.critOn, 5);
+});
+
+test('Hammer of the Deep: slam hits all beside, throw sends hits through foes (no two in a row), Recall bursts', () => {
+  const rng = rngFrom(92), G = R.newRun('Hild', 'runepriest', rng);
+  R.startScene(G, rng);
+  const { x, y } = G.pos;
+  for (let dx = -4; dx <= 0; dx++) for (let dy = -3; dy <= 0; dy++) Object.assign(tile(G.map, x + dx, y + dy), { kind: 'floor', prop: null, e: 0 });
+  const E_ = (id, fx_, fy) => ({ id, name: id, type: 'elite', x: fx_, y: fy, hp: 9000, maxHp: 9000, armor: 0, damage: 1, attacks: 1, move: 1, reach: 1, abilities: [] });
+  G.foes = [E_('a', x - 1, y), E_('b', x, y - 1), E_('c', x - 3, y - 3)];
+  G.waves = []; G.hero.energy = 100;
+  assert.ok(R.usePower(G, 'hammer', { mode: 'slam' }, rng).ok);
+  assert.ok(G.foes[0].hp < 9000 && G.foes[1].hp < 9000 && G.foes[2].hp === 9000, 'slam hits only foes beside Hild');
+  // throw
+  G.turn.acted = null; G.hero.energy = 100;
+  let seed = 1;
+  do { G.turn.acted = null; G.hero.energy = 100; R.usePower(G, 'hammer', { mode: 'throw' }, rngFrom(seed++)); } while (!R.throwPending(G) || G.throw.hits + G.throw.crits < 3);
+  assert.ok(!R.throwHammer(G, ['a', 'a'], rng).ok, 'not the same foe twice in a row');
+  const hp = G.foes.map(f => f.hp);
+  assert.ok(R.throwHammer(G, ['a', 'c', 'a'], rng).ok);
+  assert.ok(G.foes[0].hp < hp[0] && G.foes[2].hp < hp[2]);
+  assert.ok(!R.throwPending(G));
+  // Rune of Recall bursts where Hild lands
+  const R2 = rngFrom(93), H = R.newRun([{ cls: 'runepriest' }, { cls: 'ironclad' }], R2);
+  R.startScene(H, R2);
+  const me = H.party[0], ally = H.party[1];
+  for (let dx = -3; dx <= 3; dx++) for (let dy = -3; dy <= 3; dy++) { const t = tile(H.map, me.pos.x + dx, me.pos.y + dy); if (t) Object.assign(t, { kind: 'floor', prop: null, e: 0 }); }
+  ally.pos = { x: me.pos.x - 2, y: me.pos.y };
+  H.foes = [E_('z', ally.pos.x - 1, ally.pos.y)]; H.waves = []; me.energy = 100;
+  assert.ok(R.usePower(H, 'recall', { ids: [ally.hid] }, R2).ok);
+  assert.ok(H.foes[0].hp < 9000, 'the rune burst hit the foe beside the new square');
+});

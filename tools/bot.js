@@ -46,7 +46,10 @@ function heroTurn(G, rng) {
   const strike = pw.find(p => ['hammer'].includes(p.key));
   if (!G.turn.acted && strike && big && R.powerTargets(G, strike).some(t => t.id === big.id)) R.usePower(G, strike.key, { ids: [big.id] }, rng);
   const atk = pw.find(p => p.attack);
-  if (!G.turn.acted && atk && R.foesInReach(G).length) R.usePower(G, atk.key, null, rng);
+  if (!G.turn.acted && atk && R.foesInReach(G).length) {
+    const t = R.powerSpec(G, atk).mode === 'foe' ? R.powerTargets(G, atk).sort((a, b) => R.living(G).filter(o => Math.max(Math.abs(o.x - b.x), Math.abs(o.y - b.y)) <= 1).length - R.living(G).filter(o => Math.max(Math.abs(o.x - a.x), Math.abs(o.y - a.y)) <= 1).length)[0] : null;
+    R.usePower(G, atk.key, t ? { ids: [t.id] } : null, rng);
+  }
   if (R.canAttack(G) && R.foesInReach(G).length) {
     R.attack(G, rng);
     for (let guard = 0; guard < 40 && R.strikeLeft(G); guard++) {

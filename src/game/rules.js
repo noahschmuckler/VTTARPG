@@ -399,17 +399,57 @@ export function attack(G, rng) {
   if (G.strike && strikeLeft(G)) return err('Spend your remaining hits first');
   const s = derive(G.hero), P = attackPool(G);
   const dice = Array.from({ length: P.total }, () => d6(rng));
-  const hits = dice.filter(d => d >= 4).length, sixes = dice.filter(d => d === 6).length;
+  const rb = G.hero.buffs.rollBonus || 0; // +1 to every die: hits on 3+, crits on 5+
+  const hits = dice.filter(d => d + rb >= 4).length, sixes = dice.filter(d => d + rb >= 6).length;
   G.strike = { hits: hits - sixes, crits: sixes, minion: (G.strike?.minion || 0) + sixes * (s.cleave || 0), mult: G.hero.buffs.damageMult || 1 };
   const label = [G.hero.buffs.label, P.high && 'high ground', P.hidden && 'from hiding', P.brand && 'Runebrand'].filter(Boolean).join(', ');
   G.hero.buffs = {};
   G.turn.acted = 'attack';
   if (G.hidden) { G.hidden = null; log(G, `${G.hero.name} strikes from hiding!`, 'hit'); }
   fx(G, { t: 'anim', id: G.hero.hid, a: 'act' });
-  fx(G, { t: 'dice', who: G.hero.name, label: label ? `Attack (${label})` : 'Attack', dice, hitOn: 4 });
+  fx(G, { t: 'dice', who: G.hero.name, label: label ? `Attack (${label})${rb ? `, +${rb} to every die` : ''}` : 'Attack', dice, hitOn: 4 - rb, critOn: 6 - rb });
   log(G, hits ? `${G.hero.name} rolls ${hits} hit${hits === 1 ? '' : 's'}${sixes ? ` (${sixes} crit${sixes > 1 ? 's' : ''})` : ''}.` : `${G.hero.name} rolls and misses.`, 'hit');
   if (!strikeLeft(G)) G.strike = null;
   return ok({ hits, sixes });
+}
+// The hammer throw: send the rolled hits through foes within 6 in sight, in order, never the same foe twice in a row.
+export const throwPending = G => G.throw && G.throw.hid === G.hero.hid ? G.throw : null;
+export const throwTargets = G => living(G).filter(f => dist(f, G.pos) <= 6 && lineOfSight(G.map, G.pos, f));
+export function throwHammer(G, ids, rng) {
+  const T = throwPending(G);
+  if (!T) return err('No hammer in the air');
+  const total = T.hits + T.crits, ok_ = new Set(throwTargets(G).map(f => f.id));
+  ids = (ids || []).slice(0, total);
+  if (!ids.length) return err('Pick at least one foe');
+  for (let i = 0; i < ids.length; i++) {
+    if (!ok_.has(ids[i])) return err('Every target must be within 6 squares in sight');
+    if (i && ids[i] === ids[i - 1]) return err('The hammer can\'t strike the same foe twice in a row');
+  }
+  G.throw = null;
+  let from = { ...G.pos }, crits = T.crits;
+  fx(G, { t: 'anim', id: G.hero.hid, a: 'act' });
+  let prev = null;
+  for (const id of ids) {
+    let f = G.foes.find(q => q.id === id);
+    if (f.dead) { // its mark already fell: the hammer finds the nearest living foe in range instead (not the one it just hit)
+      const alt = throwTargets(G).filter(o => o !== prev).sort((a, b) => dist(a, f) - dist(b, f))[0];
+      if (!alt) continue;
+      f = alt;
+    }
+    prev = f;
+    const to = { x: f.x, y: f.y };
+    fx(G, { t: 'bolt', from, to, cls: 'hammer' });
+    if (!f.dead) {
+      const crit = crits > 0; if (crit) crits--;
+      if (f.type === 'minion' || !crit) hitFoe(G, f, 1, rng, { label: 'Hammer' });
+      else hitFoe(G, f, 1, rng, { crit: false, mult: T.critMult, label: 'Hammer crit' });
+    }
+    from = to;
+  }
+  fx(G, { t: 'bolt', from, to: { ...G.pos }, cls: 'hammer' }); // and back to the thrower's hand
+  log(G, `${G.hero.name}'s hammer strikes ${ids.length} time${ids.length > 1 ? 's' : ''} and returns.`, 'ability');
+  checkCleared(G);
+  return ok();
 }
 export const strikeLeft = G => (G.strike ? G.strike.hits + G.strike.crits + G.strike.minion : 0);
 // Spend ONE hit on a foe in reach. kind: 'crit' | 'hit' | 'minion' (minion-only hits); omitted = auto:
@@ -442,7 +482,10 @@ const SPECS = {
   bulwark: { mode: 'self', radius: 3, text: 'Ward yourself; foes within 3 are dragged to your side.' },
   recall: { mode: 'foe', range: 10, sight: false, allies: true, text: 'Pick an ally (or a foe) within 10 to swap places with.' },
   circle: { mode: 'self', radius: 2, text: 'Ward and heal you and allies within 2; foes can\'t step inside the circle this round.' },
-  hammer: { mode: 'foe', range: 6, sight: true, text: 'Pick a foe within 6 in sight.' },
+  hammer: { mode: 'foe', range: 6, sight: true, text: 'Strike: pick a foe within 6 in sight.' },
+  'hammer:slam': { mode: 'self', radius: 1, text: 'Slam: every foe beside Hild is hit.' },
+  'hammer:throw': { mode: 'self', text: 'Throw: roll, then tap foes in order to send the hammer through them.' },
+  'set:emberheart': { mode: 'foe', range: 'reach', sight: true, attackFoe: true, text: 'Pick a foe in your reach for the burst, then attack.' },
   grapple: { mode: 'tile', range: 8, sight: true, higher: true, strike: true, text: 'Pick a higher square within 8 in sight, then attack.' },
   vanish: { mode: 'walk', range: 4, text: 'Pick a square up to 4 moves away; you vanish there.' },
   pin: { mode: 'foes', range: 12, sight: true, max: 2, text: 'Pick up to 2 foes within 12 in sight, then confirm.' },
@@ -458,9 +501,9 @@ const DESC = {
   leap: 'Leap up to 4 squares, even 3 levels up onto a ledge, with no free blows. Then attack in the same action with +2 dice.',
   quake: 'Slam the ground: every foe within 2 squares takes a hit and is hurled 3 squares away. A foe slammed into a wall, ledge or another foe takes +1 hit; minions knocked into a chasm are gone.',
   bulwark: 'Gain a 600 ward and roar: every foe within 3 squares is dragged to your side and fights you this round.',
-  recall: 'Swap places with an ally (or a foe) within 10 squares, with no free blows. Foes turn on whoever now stands before them, and you both gain a 300 rune ward.',
+  recall: 'Swap places with an ally (or a foe) within 10 squares, with no free blows: you arrive in a burst of runes that hits every foe beside you. Foes turn on whoever now stands before them, and you both gain a 300 rune ward.',
   circle: 'You and every ally within 2 squares gain a 300 rune ward and heal 10%. Foes can\'t step into the circle until the next round.',
-  hammer: 'Strike a foe within 6 squares in sight: {hits} hits, knocked 3 squares back (+1 hit if slammed into something), and pinned until the next round.',
+  hammer: 'Three ways to use it, 40 energy each. Strike: a foe within 6 in sight takes {hits} hits, is knocked 3 squares back (+1 hit if slammed into something) and pinned. Slam: every foe beside you takes {slam}. Throw: roll {throwDice} and send the hammer through foes within 6 in sight, one hit each, never the same foe twice in a row.{forge}',
   grapple: 'Haul yourself up to a higher square within 8 in sight, with no free blows. Then attack in the same action with +1 die (plus high ground).',
   vanish: 'Move up to 4 squares and become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
   pin: 'Pin up to 2 foes within 12 squares in sight so they can\'t move until the next round. +2 dice on your next attack.',
@@ -470,8 +513,29 @@ const DESC = {
   step: 'Pick a foe within 6 squares and any free square beside it: you teleport there, with no free blows. Then attack in the same action for triple damage.',
   smoke: 'Become Hidden: foes ignore you in the enemy phase, and your next attack gets +3 dice.',
 };
-export const powerText = p => (p.key === 'step' && p.vaultWard ? `${DESC.step} Vaultbreaker: you also gain a ${fmt(p.vaultWard)} ward.` : (DESC[p.key] || p.text).replace('{hits}', hitsOf(p, 2)));
+export const powerText = p => {
+  if (p.key === 'step' && p.vaultWard) return `${DESC.step} Vaultbreaker: you also gain a ${fmt(p.vaultWard)} ward.`;
+  if (p.key === 'hammer') {
+    const H = hammerPower(p);
+    return DESC.hammer.replace('{hits}', H.strikeHits).replace('{slam}', H.slamHits > 1 ? `${H.slamHits} hits` : 'a hit').replace('{throwDice}', `your dice +${H.throwBonus}`)
+      .replace('{forge}', H.forge ? ` Thunderforge ×${H.forge}: +${H.forge} chain-lightning minion hit${H.forge > 1 ? 's' : ''} every time, and the throw crits at ×+${H.forge * 0.25}.` : ' Each Thunderforge piece makes it stronger.');
+  }
+  return (DESC[p.key] || p.text).replace('{hits}', hitsOf(p, 2));
+};
+// Hammer of the Deep's numbers with n Thunderforge pieces.
+// One mode's description, for the power panel.
+export function hammerModeText(p, m = p.hmode || 'strike') {
+  const H = hammerPower(p), forge = H.forge ? ` Thunderforge ×${H.forge}: +${H.forge} chain-lightning minion hit${H.forge > 1 ? 's' : ''}.` : '';
+  if (m === 'slam') return `Slam the ground: every foe beside you takes ${H.slamHits > 1 ? `${H.slamHits} hits` : 'a hit'}.${forge}`;
+  if (m === 'throw') return `Roll your dice +${H.throwBonus}, then send the hammer through foes within 6 in sight in the order you pick, one hit each, never the same foe twice in a row. It flies back to you.${H.critBonus ? ` Its crits hit at ×${H.critBonus} more.` : ''}${forge}`;
+  return `A foe within 6 in sight takes ${H.strikeHits} hits, is knocked 3 squares back (+1 hit if slammed into something) and pinned until the next round.${forge}`;
+}
+export function hammerPower(p) {
+  const n = p.forge || 0;
+  return { forge: n, strikeHits: hitsOf(p, 3) + Math.floor(n / 2), slamHits: n >= 3 ? 2 : 1, throwBonus: 2 + n, critBonus: 0.25 * n, lightning: n };
+}
 export function powerSpec(G, p) {
+  if (p.key === 'hammer' && p.hmode && p.hmode !== 'strike') return SPECS['hammer:' + p.hmode];
   if (SPECS[p.key]) return SPECS[p.key];
   return { mode: 'self', text: soloNotes(p, G) || p.text };
 }
@@ -488,8 +552,20 @@ function soloNotes(p, G) {
 // The Vaultbreaker set power is "Vault" here: a short teleport with its ward and damage boost. A Shadowblade has a
 // Shadowstep already, so for them it folds into Shadowstep instead (adding the ward).
 SETS.vaultbreaker.power.name = 'Vault'; // already the ledger's name since ttarpg ceef925; kept so older ledgers agree
+export const thunderforgeOf = h => setCounts(h).thunderforge || 0;
 export function powersOf(h) {
   const list = powersFor(h);
+  // Emberburst: a burst on the target and everything beside it, then an attack with +1 die and +1 to every die
+  const eb = list.find(p => p.key === 'set:emberheart');
+  if (eb && !eb.burst) {
+    const buff = eb.effects.find(e => e.kind === 'buff') || {};
+    eb.effects = [...eb.effects.filter(e => e.kind !== 'buff'), { ...buff, kind: 'buff', bonusDice: (buff.bonusDice || 0) + 1, rollBonus: 1 }];
+    eb.burst = true;
+    eb.text = `Pick a foe in your reach: a burst hits it and every foe beside it (1 hit each, always). Then attack with ×${+(buff.damageMult || 1).toFixed(2)} damage, +${(buff.bonusDice || 0) + 1} ${(buff.bonusDice || 0) + 1 > 1 ? 'dice' : 'die'}, and +1 to every die (hits on 3+, crits on 5+).`;
+  }
+  // Hammer of the Deep: Thunderforge pieces strengthen it (see hammerPower)
+  const hm = list.find(p => p.key === 'hammer');
+  if (hm) { hm.forge = thunderforgeOf(h); if (hm.forge) hm.boosted = [...(hm.boosted || []), `Thunderforge ×${hm.forge}`]; }
   const v = list.find(p => p.key === 'set:vaultbreaker');
   if (!v) return list;
   const ward = v.effects.filter(e => e.kind === 'ward').reduce((t, e) => t + e.amount, 0);
@@ -514,7 +590,7 @@ export function powerUsable(G, p) {
 }
 // Valid targets for a power: squares (tile/walk/point modes) or foes.
 export function powerTargets(G, p) {
-  const S = powerSpec(G, p), here = G.pos, he = heroTile(G).e;
+  const S0 = powerSpec(G, p), S = S0.range === 'reach' ? { ...S0, range: heroReach(G) } : S0, here = G.pos, he = heroTile(G).e;
   const out = [];
   if (S.mode === 'tile' || S.mode === 'point') {
     for (let y = 0; y < G.map.h; y++) for (let x = 0; x < G.map.w; x++) {
@@ -547,7 +623,8 @@ export function landingSpots(G, f) {
 }
 // Use a power. target: { x, y } for squares and points, { ids: [...] } for foes (Shadowstep: { ids, x, y }); nothing for self.
 export function usePower(G, keyName, target, rng) {
-  const p = powerList(G).find(q => q.key === keyName);
+  let p = powerList(G).find(q => q.key === keyName);
+  if (p && keyName === 'hammer') p = { ...p, hmode: ['slam', 'throw'].includes(target?.mode) ? target.mode : 'strike' };
   if (!p) return err('Unknown power');
   if (!powerUsable(G, p)) return err(G.hero.energy < p.cost ? 'Not enough energy' : 'You have already acted this turn');
   const S = powerSpec(G, p);
@@ -575,6 +652,7 @@ export function usePower(G, keyName, target, rng) {
     const b = G.hero.buffs;
     b.bonusDice = (b.bonusDice || 0) + (f.bonusDice || 0);
     b.damageMult = Math.max(b.damageMult || 1, f.damageMult || 1);
+    if (f.rollBonus) b.rollBonus = (b.rollBonus || 0) + f.rollBonus;
     b.label = p.name;
   };
   // positional class powers
@@ -617,14 +695,32 @@ export function usePower(G, keyName, target, rng) {
       else { u.x = from.x; u.y = from.y; }
       fx(G, { t: 'move', id: G.hero.hid, path: [upos, G.pos], kind: 'blink' });
       fx(G, { t: 'move', id: ally ? u.hid : u.id, path: [G.pos, from], kind: 'blink' });
+      fx(G, { t: 'burst', at: { ...G.pos }, kind: 'circle', radius: 1 }); // a burst of runes where you arrive
+      for (const f of living(G).filter(f => adjacent(f, G.pos))) hitFoe(G, f, 1, rng, { label: 'Rune burst' });
       break;
     }
     case 'circle': G.zone = { x: G.pos.x, y: G.pos.y, r: S.radius, round: G.round }; fx(G, { t: 'burst', at: { ...G.pos }, kind: 'circle', radius: S.radius }); break;
     case 'hammer': {
+      const H = hammerPower(p);
+      if (H.lightning) smite(G, H.lightning, rng);
+      if (p.hmode === 'slam') {
+        fx(G, { t: 'burst', at: { ...G.pos }, kind: 'quake', radius: 1 });
+        for (const f of living(G).filter(f => adjacent(f, G.pos))) hitFoe(G, f, H.slamHits, rng, { label: 'Slam' });
+        break;
+      }
+      if (p.hmode === 'throw') {
+        const s = derive(G.hero), dice = Array.from({ length: s.pool + H.throwBonus }, () => d6(rng));
+        const hits = dice.filter(d => d >= 4).length, crits = dice.filter(d => d === 6).length;
+        G.throw = { hid: G.hero.hid, hits: hits - crits, crits, critMult: s.critMult + H.critBonus };
+        fx(G, { t: 'dice', who: G.hero.name, label: 'Hammer throw', dice, hitOn: 4 });
+        log(G, hits ? `${G.hero.name}'s hammer has ${hits} hit${hits > 1 ? 's' : ''} to give${crits ? ` (${crits} crit${crits > 1 ? 's' : ''})` : ''}.` : `${G.hero.name}'s throw goes wide.`, 'hit');
+        if (!hits) G.throw = null;
+        break;
+      }
       const f = foes[0];
       fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: 'hammer' });
       const slam = push(G, f, dirFrom(G.pos, f), 3, rng);
-      if (!f.dead) { hitFoe(G, f, hitsOf(p, 2) + (slam ? 1 : 0), rng, { label: slam ? 'Slammed' : '' }); if (!f.dead) pinFoe(G, f); }
+      if (!f.dead) { hitFoe(G, f, H.strikeHits + (slam ? 1 : 0), rng, { label: slam ? 'Slammed' : '' }); if (!f.dead) pinFoe(G, f); }
       break;
     }
     case 'pin': for (const f of foes) { fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: 'ranger' }); pinFoe(G, f); } break;
@@ -663,6 +759,13 @@ export function usePower(G, keyName, target, rng) {
       break;
     }
     case 'smoke': fx(G, { t: 'burst', at: { ...G.pos }, kind: 'smoke', radius: 1 }); break;
+    case 'set:emberheart': { // the burst: the target and every foe beside it take a hit, whatever the roll
+      const f = foes[0];
+      fx(G, { t: 'bolt', from: { ...G.pos }, to: { x: f.x, y: f.y }, cls: 'arcanist' });
+      fx(G, { t: 'burst', at: { x: f.x, y: f.y }, kind: 'meteor', radius: 1 });
+      for (const o of living(G).filter(o => o === f || adjacent(o, f))) hitFoe(G, o, 1, rng, { label: 'Emberburst' });
+      break;
+    }
   }
   // the ledger's effect list (buffs, wards, heals, energy, minion-slaying hits, hiding)
   for (const f of effects) {
@@ -1053,6 +1156,7 @@ export function buyWare(G, k) {
 export function endTurn(G, rng) {
   if (G.stage !== 'scene') return err('Not now');
   for (const h of G.party) h.strike = null;
+  G.throw = null;
   fx(G, { t: 'phase', name: 'Enemy phase' });
   enemyPhase(G, rng);
   if (G.stage !== 'scene') return ok();

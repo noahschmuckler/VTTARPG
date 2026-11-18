@@ -263,9 +263,9 @@ export class View {
     const color = BOLT[e.cls] || '#fff';
     const a = this.iso(e.from.x, e.from.y, this.elev(e.from.x, e.from.y)), b = this.iso(e.to.x, e.to.y, this.elev(e.to.x, e.to.y));
     a.y -= 40; b.y -= 30;
-    const v = { kind: e.cls === 'lightning' ? 'zap' : (e.cls === 'arrow' || e.cls === 'ranger') ? 'arrow' : 'orb', a, b, color, t: 0, dur: e.cls === 'lightning' ? 0.35 : 0.3 };
+    const v = { kind: e.cls === 'lightning' ? 'zap' : e.cls === 'hammer' ? 'hammer' : (e.cls === 'arrow' || e.cls === 'ranger') ? 'arrow' : 'orb', a, b, color, t: 0, dur: e.cls === 'lightning' ? 0.35 : e.cls === 'hammer' ? 0.32 : 0.3 };
     this.vfx.push(v);
-    return this.wait(e.cls === 'lightning' ? 0.12 : 0.22);
+    return this.wait(e.cls === 'lightning' ? 0.12 : e.cls === 'hammer' ? 0.3 : 0.22);
   }
   burst(e) {
     const c = this.iso(e.at.x, e.at.y, this.elev(e.at.x, e.at.y));
@@ -583,6 +583,15 @@ export class View {
         g.globalAlpha = q < 1 ? 1 : 1 - (k - 0.75) / 0.25; g.fillStyle = grd;
         g.beginPath(); g.arc(x, y, q < 1 ? 16 : 16 + (k - 0.75) * 120, 0, 7); g.fill();
       }
+    } else if (v.kind === 'hammer') { // Hammer of the Deep in flight: spinning, with a crackling teal trail
+      const q = Math.min(1, v.t / v.dur), x = v.a.x + (v.b.x - v.a.x) * q, y = v.a.y + (v.b.y - v.a.y) * q - Math.sin(q * Math.PI) * 26;
+      g.strokeStyle = 'rgba(95,211,196,0.55)'; g.lineWidth = 5; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(v.a.x + (x - v.a.x) * 0.55, v.a.y + (y - v.a.y) * 0.55); g.lineTo(x, y); g.stroke();
+      g.translate(x, y); g.rotate(v.t * 22);
+      g.fillStyle = '#6b4a2a'; g.fillRect(-2, -2, 4, 22);                 // handle
+      g.fillStyle = '#cfd8e3'; g.strokeStyle = '#2a3440'; g.lineWidth = 1.5;
+      g.beginPath(); g.rect(-11, -10, 22, 11); g.fill(); g.stroke();       // head
+      g.fillStyle = '#5fd3c4'; g.fillRect(-2, -8, 4, 7);                   // rune
     } else if (v.kind === 'zap') {
       g.strokeStyle = v.color; g.lineWidth = 3; g.globalAlpha = 1 - k; g.shadowColor = v.color; g.shadowBlur = 12;
       g.beginPath(); g.moveTo(v.a.x, v.a.y - 30);

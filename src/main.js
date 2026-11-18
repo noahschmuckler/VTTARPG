@@ -341,10 +341,10 @@ async function showDice(e) {
     res = `${landed ? `<span style="color:var(--bad)">${landed} blow${landed > 1 ? 's' : ''} land${crits ? `, ${crits} crit${crits > 1 ? 's' : ''}` : ''}</span>` : '<span style="color:var(--good)">All blocked</span>'} <span class="dim">(hits on ${e.hitOn}+, 6 crits)</span>`;
     el.innerHTML = `<div class="who">${esc(e.label)}</div><div class="row">${e.dice.map(d => dieHTML(d, d === 6 ? 'land crit' : d >= e.hitOn ? 'land' : 'miss')).join('')}</div><div class="res">${res}</div>`;
   } else {
-    const need = e.hitOn || 4;
-    const hits = e.dice.filter(d => d >= need).length, sixes = e.dice.filter(d => d === 6).length;
+    const need = e.hitOn || 4, critOn = e.critOn || 6;
+    const hits = e.dice.filter(d => d >= need).length, sixes = need <= 4 ? e.dice.filter(d => d >= critOn).length : 0;
     res = e.label.startsWith('Climb') ? (hits ? '<span style="color:var(--good)">You haul yourself out!</span>' : '<span style="color:var(--bad)">You slip back</span>') : `${hits} hit${hits === 1 ? '' : 's'}${sixes ? `, ${sixes} crit${sixes > 1 ? 's' : ''}` : ''}`;
-    el.innerHTML = `<div class="who">${esc(e.label)}</div><div class="row">${e.dice.map(d => dieHTML(d, d === 6 && need === 4 ? 'crit' : d >= need ? 'hit' : 'miss')).join('')}</div><div class="res">${res}</div>`;
+    el.innerHTML = `<div class="who">${esc(e.label)}</div><div class="row">${e.dice.map(d => dieHTML(d, need <= 4 && d >= critOn ? 'crit' : d >= need ? 'hit' : 'miss')).join('')}</div><div class="res">${res}</div>`;
   }
   el.hidden = false;
   clearTimeout(diceTimer);
@@ -471,15 +471,28 @@ function refresh(light = false) {
     st.querySelectorAll('.sk').forEach(b => b.onclick = () => { spendKind = b.dataset.k || null; refresh(); });  } else st.hidden = true;
   // targeting bar
   const tg = $('#targeting');
-  if (mode.kind === 'power') {
+  const T = R.throwPending(G);
+  if (T) {
+    if (mode.kind !== 'throw') mode = { kind: 'throw', seq: [] };
+    const total = T.hits + T.crits, names = mode.seq.map(id => G.foes.find(f => f.id === id)?.name || '?');
+    tg.hidden = false;
+    tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">Hammer throw <span class="dim" style="font:12px var(--sans)">${total} hit${total > 1 ? 's' : ''}${T.crits ? `, the first ${T.crits} crit${T.crits > 1 ? 's' : ''} ×${+T.critMult.toFixed(2)}` : ''}</span></b>
+      <span class="desc">${TOUCH ? 'Tap' : 'Click'} foes within 6 squares in the order the hammer should strike them (not the same foe twice in a row), then confirm. ${mode.seq.length}/${total}: ${esc(names.join(' → ') || 'none yet')}</span>
+      <button class="primary" id="thGo" ${mode.seq.length ? '' : 'disabled'}>Throw (${mode.seq.length})</button><button id="thUndo" ${mode.seq.length ? '' : 'disabled'}>Undo</button>`;
+    tg.querySelector('#thGo').onclick = () => { const seq = mode.seq; mode = { kind: 'idle' }; act(() => R.throwHammer(G, seq, rng)); };
+    tg.querySelector('#thUndo').onclick = () => { mode.seq.pop(); refresh(); };
+  } else if (mode.kind === 'throw') { mode = { kind: 'idle' }; tg.hidden = true; }
+  if (T) { /* the throw panel is showing */ } else if (mode.kind === 'power') {
     tg.hidden = false;
     const spec = R.powerSpec(G, mode.p);
     const usable = R.powerUsable(G, mode.p), none = spec.mode !== 'self' && !R.powerTargets(G, mode.p).length;
     const why = !usable ? (G.hero.energy < mode.p.cost ? `Needs ${mode.p.cost} energy (you have ${G.hero.energy}).` : 'You have already acted this turn.') : none ? 'Nothing in range from here: move first.' : '';
     const stepFoe = spec.landing && mode.foe && G.foes.find(f => f.id === mode.foe);
     const howTo = stepFoe ? `Now pick the square beside ${stepFoe.name} to appear on (tap another foe to switch).` : spec.mode !== 'self' || R.powerText(mode.p) === mode.p.text ? (spec.text !== mode.p.text ? spec.text : '') : '';
-    tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(mode.p.name)} <span class="dim" style="font:12px var(--sans)">${mode.p.cost} energy</span></b><span class="desc">${esc(R.powerText(mode.p))}${why ? `<br><span style="color:var(--bad)">${esc(why)}</span>` : howTo ? `<br><span style="color:var(--brass2)">▸ ${esc(howTo)}</span>` : ''}</span>${spec.mode === 'foes' ? `<button class="primary" id="tgGo" ${mode.picked.length ? '' : 'disabled'}>Confirm (${mode.picked.length})</button>` : ''}${spec.mode === 'self' ? `<button class="primary" id="tgGo" ${usable ? '' : 'disabled'}>Use ${esc(mode.p.name)}</button>` : ''}<button id="tgX">Cancel <kbd>Esc</kbd></button>`;
+    const modes = mode.p.key === 'hammer' ? `<span class="hmodes">${[['strike', 'Strike'], ['slam', 'Slam'], ['throw', 'Throw']].map(([k, l]) => `<button data-hm="${k}" class="${(mode.p.hmode || 'strike') === k ? 'on' : ''}">${l}</button>`).join('')}</span>` : '';
+    tg.innerHTML = `<b style="font-family:var(--serif);color:var(--brass2)">${esc(mode.p.name)} <span class="dim" style="font:12px var(--sans)">${mode.p.cost} energy</span></b>${modes}<span class="desc">${esc(mode.p.key === 'hammer' ? R.hammerModeText(mode.p) : R.powerText(mode.p))}${why ? `<br><span style="color:var(--bad)">${esc(why)}</span>` : howTo ? `<br><span style="color:var(--brass2)">▸ ${esc(howTo)}</span>` : ''}</span>${spec.mode === 'foes' ? `<button class="primary" id="tgGo" ${mode.picked.length ? '' : 'disabled'}>Confirm (${mode.picked.length})</button>` : ''}${spec.mode === 'self' ? `<button class="primary" id="tgGo" ${usable ? '' : 'disabled'}>Use ${esc(mode.p.name)}</button>` : ''}<button id="tgX">Cancel <kbd>Esc</kbd></button>`;
     tg.querySelector('#tgX').onclick = cancelMode;
+    tg.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { mode.p = { ...mode.p, hmode: b.dataset.hm }; mode.picked = []; refresh(); });
     const go = tg.querySelector('#tgGo');
     if (go) go.onclick = () => { if (performance.now() - (mode.opened || 0) < 450) return; firePower(spec.mode === 'foes' ? { ids: mode.picked } : null); }; // ignore a stray double tap
   } else if (mode.kind === 'ware') {
@@ -508,6 +521,11 @@ function updateHighlights() {
   const hl = {};
   hl.inReach = new Set(R.foesInReach(G).map(f => f.id));
   if (busy || G.stage !== 'scene') { view.hl = { hover: hover && { ...hover } }; return; }
+  if (mode.kind === 'throw') {
+    hl.targets = new Set(R.throwTargets(G).map(f => key(f.x, f.y)));
+    if (mode.seq.length) { const f = G.foes.find(q => q.id === mode.seq[mode.seq.length - 1]); if (f) hl.picked = new Set([key(f.x, f.y)]); }
+    hl.inReach = new Set(); hl.hover = hover && { ...hover }; view.hl = hl; return;
+  }
   if (mode.kind === 'power') {
     const spec = R.powerSpec(G, mode.p);
     const landFoe = spec.landing && mode.foe && G.foes.find(f => f.id === mode.foe && !f.dead);
@@ -673,6 +691,7 @@ function bindInput() {
     if (f && R.strikeLeft(G) && mode.kind === 'idle' && R.inReach(G, G.pos, f, R.heroReach(G))) { clearSel(); clickTile(t); return; }
     if (t && sel && t.x === sel.x && t.y === sel.y && intentFor(t)) { clearSel(); clickTile(t); return; }
     if (t && mode.kind === 'power' && R.powerSpec(G, mode.p).landing && R.foeAt(G, t.x, t.y)) { clearSel(); clickTile(t); return; } // choosing Shadowstep's target spends nothing
+    if (t && mode.kind === 'throw' && R.foeAt(G, t.x, t.y)) { clearSel(); clickTile(t); return; } // assigning hammer hits spends nothing
     const mate = t && mode.kind === 'idle' && R.heroAt(G, t.x, t.y);
     if (mate && mate !== G.hero) { clearSel(); switchHero(G.party.indexOf(mate)); return; } // one tap switches heroes
     selectTile(t);
@@ -749,6 +768,13 @@ async function endTurn() {
 }
 async function clickTile(t) {
   if (busy || !G || G.stage !== 'scene') return;
+  if (mode.kind === 'throw') {
+    const f = R.foeAt(G, t.x, t.y), T = R.throwPending(G);
+    if (!f || !T || !R.throwTargets(G).includes(f)) return toast('Hammer throw', 'Pick a highlighted foe within 6 squares.', 'err');
+    if (mode.seq[mode.seq.length - 1] === f.id) return toast('Hammer throw', 'Not the same foe twice in a row: pick another one first.', 'err');
+    if (mode.seq.length >= T.hits + T.crits) return toast('Hammer throw', 'Every hit is assigned: throw, or undo one.', 'err');
+    mode.seq.push(f.id); return refresh();
+  }
   if (mode.kind === 'power') return clickPower(t);
   const other = R.heroAt(G, t.x, t.y);
   if (other && other !== G.hero) return switchHero(G.party.indexOf(other));
@@ -811,6 +837,7 @@ async function clickPower(t) {
 }
 async function firePower(target, p = mode.p) {
   mode = { kind: 'idle' };
+  if (p.key === 'hammer') target = { ...(target || {}), mode: p.hmode || 'strike' };
   const r = await act(() => R.usePower(G, p.key, target, rng));
   if (r?.ok && r.attack && G.stage === 'scene') {
     toast(p.name, R.foesInReach(G).length ? `Attack primed: ${TOUCH ? 'tap Strike' : 'click a foe in reach (or press A)'} to roll.` : 'Attack primed: move into reach, then attack.');
@@ -1072,7 +1099,7 @@ function help(after) {
     <p><b>Armour</b> is a rating: it blocks rating ÷ (rating + 100) of each blow, so 100 armour halves damage and nothing is ever immune; your armour shows as "rating (share blocked)". A crit pierces half your armour, and foes with <b>Armour-breaker</b> ignore 20 more.</p>
     <p><b>Wards</b> soak what gets through armour. You hold two layers: a <b>ward</b> (anyone's powers and wares) and a <b>rune ward</b> (the Runepriest's Warding Circle and Rune of Recall). A new ward in a layer only replaces the old one if it's bigger; they never add up. Damage hits the rune ward first, then the ward. At the end of each round both halve.</p>
     <h3>Energy</h3><p>Every kill grants energy (a blue +N ⚡). Minion kills taper each round: the first pays in full, the 2nd and 3rd half, later ones a quarter; elite and boss kills always pay in full. At the end of the round you gain your Energy per Round, or half of it if you're already at half your max or more. Energy per Round from gear also tapers: the first +15 counts in full, the next +15 half, the rest a quarter. <b>Surge</b>: once per round, after acting, spend ${R.ENERGY.surge} energy to act again. Some foes drain energy: <b>Energy Leech</b>, <b>Drown</b> (2+ blows landing take 25) and <b>Chill</b> (heroes beside it lose 10 each round).</p>
-    <h3>The Runepriest</h3><p><b>Runebrand</b>: every foe the Runepriest damages is branded until the end of the round, and any other hero attacking with a branded foe in reach rolls +1 die. <b>Reactions</b> cost energy but not his action, work outside his turn and once each per round: on another hero's turn, the ᛟ row offers <b>Rune of Mending</b> (25: heal an ally below a third of their health by 15%) and <b>Rune of Haste</b> (30: their next attack rolls +1 die). <b>Rune of Turning</b> (20) is armed by default and fires by itself when a foe's blows are about to land hard on an ally: every die that hit is rerolled once.</p>
+    <h3>The Runepriest</h3><p><b>Runebrand</b>: every foe the Runepriest damages is branded until the end of the round, and any other hero attacking with a branded foe in reach rolls +1 die. <b>Reactions</b> cost energy but not his action, work outside his turn and once each per round: on another hero's turn, the ᛟ row offers <b>Rune of Mending</b> (25: heal an ally below a third of their health by 15%) and <b>Rune of Haste</b> (30: their next attack rolls +1 die). <b>Hammer of the Deep</b> has three modes, 40 energy each: <b>Strike</b> (one foe: hits, knockback, pin), <b>Slam</b> (every foe beside him) and <b>Throw</b> (roll his dice +2, then tap foes in order and the hammer flies through them, never the same foe twice in a row). Thunderforge pieces strengthen it with chain-lightning minion hits, more throw dice and harder throw crits. <b>Rune of Recall</b> lands in a burst that hits every foe beside him. <b>Rune of Turning</b> (20) is armed by default and fires by itself when a foe's blows are about to land hard on an ally: every die that hit is rerolled once.</p>
     <h3>Chasms</h3><p>A Slam can hurl you into a chasm: a fall costs 10% of your health and foes lose you. Climbing out is your action: d6 4+, with +1 for each failed try. Minions pushed into a chasm are gone; elites climb out hurt.</p>
     <h3>Waves and scenes</h3><p>Each scene comes from the Delvers' Ledger adventure planner: skirmishes, swarms, elite packs, gauntlets and bosses, sized to your gear when each act began. Reinforcements arrive at the end of later rounds. Clear every foe and the turns stop: walk freely, open the chests (gold beacons) and take the glowing spiral stair in the west wall; the buttons at the bottom walk you there. Between acts the Rakshasa buys your spare gear for Favour and sells boons and wares.</p>
     <h3>Foe abilities</h3>${foes}
@@ -1094,5 +1121,5 @@ function menu() {
 }
 
 // expose for debugging and automated play-tests
-window.__game = { get G() { return G; }, get view() { return view; }, R, act, rng: () => rng, camp, inventory, beginScene, enterScene, help, refresh, playFx };
+window.__game = { get G() { return G; }, get view() { return view; }, get busy() { return busy; }, get mode() { return mode; }, R, act, rng: () => rng, camp, inventory, beginScene, enterScene, help, refresh, playFx };
 boot();
